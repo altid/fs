@@ -1,0 +1,18 @@
+/mnt/altid/clone
+/mnt/altid/stats
+/mnt/altid/[0-9]
+/mnt/altid/[0-9]/feed
+/mnt/altid/[0-9]/...
+
+/mnt/altid/service
+/mnt/altid/service/clone
+/mnt/altid/service/[0-9]
+
+Can read stats for list of servers, etc
+Clone, get your n back
+/mnt/altid/1/ctl, write which service to connect to
+the fs populates with that, you can read in tabs to see what buffers are available
+
+Commands:
+ - markup, will need to import the state machine parser to pre-parse the output into just text
+ - tabs could be a command?
