@@ -2,8 +2,12 @@
 #include <libc.h>
 #include <ctype.h>
 #include <fcall.h>
+#include <thread.h>
+#include <9p.h>
 
 #include "alt.h"
+
+// TODO: Start turning off output if we aren't connected to anything
 
 enum {
 	Qroot,
@@ -25,392 +29,500 @@ enum {
 		Qmax,
 };
 
-static char *qinfo[Qmax] = {
-	[Qroot]	"/",
-	[Qclone]		"clone",
-	[Qclients]		nil,
-	[Qctl]			"ctl",
-	[Qtitle]			"title",
-	[Qstatus]			"status",
-	[Qfeed]			"feed",
-	[Qaside]			"aside",
-	[Qnotify]			"notify",
-	[Qtabs]			"tabs",
-	[Qinput]			"input",
-	[Qservices]	"services",
-	[Qsclone]			"clone",
-	[Qservice]			nil,
-	[Qsctl]				"ctl",
-	[Qsinput]				"input",
+static char *nametab[] = {
+	"/",
+		"clone",
+		nil,
+			"ctl",
+			"title",
+			"status",
+			"feed",
+			"aside",
+			"notify",
+			"tabs",
+			"input",
+		"services",
+			"clone",
+			nil,
+				"ctl",
+				"input",
+		nil,
 };
 
-typedef struct Fid Fid;
-struct Fid
+typedef struct Altfid Altfid;
+struct Altfid
 {
-	int	fid;
-	ulong	qtype;
-	ulong	uniq;
-	int	busy;
+	int	level;
 	Client	*client;
 	Service	*service;
+	int	fd;
 	vlong	foffset;
-	Fid	*next;
 };
 
-static char	*whitespace = "\t\r\n";
-static int		chatty9p = 0;
-static Fid		*fids;
-static Fcall	rhdr, thdr;
-static uchar	mdata[8192 + IOHDRSZ];
-static int		messagesize = sizeof mdata;
+static char *whitespace = "\t\r\n";
 
-
-static void	io(int, int);
-static Qid		mkqid(Fid*);
-static Fid		*findfid(int);
-static int		dostat(Fid*, void*, int);
-
-static char	*Auth(Fid*), *Attach(Fid*), *Version(Fid*),
-		*Flush(Fid*), *Walk(Fid*), *Open(Fid*),
-		*Create(Fid*), *Read(Fid*), *Write(Fid*),
-		*Clunk(Fid*), *Remove(Fid*), *Stat(Fid*),
-		*Wstat(Fid*);
-
-static char *(*fcalls[])(Fid*) = {
-	[Tattach]	Attach,
-	[Tauth]	Auth,
-	[Tclunk]	Clunk,
-	[Tflush]	Flush,
-	[Topen]	Open,
-	[Tread]	Read,
-	[Tremove]	Remove,
-	[Tstat]	Stat,
-	[Tversion]	Version,
-	[Twalk]	Walk,
-	[Twrite]	Write,
-	[Twstat]	Wstat,
-};
-
-static char *
-Flush(Fid *f)
+void*
+emalloc(int n)
 {
-	USED(f);
-	return 0;
+	void *v;
+	v = emalloc9p(n);
+	setmalloctag(v, getcallerpc(&n));
+	memset(v, 0, n);
+	return v;
 }
 
-static char *
-Auth(Fid *f)
+char*
+estrdup(char *s)
 {
-	// TODO: Implement auth
-	USED(f);
-	return "alt/fs: authentication not required";
+	s = estrdup9p(s);
+	setmalloctag(s, getcallerpc(&s));
+	return s;
 }
 
-static char *
-Attach(Fid *f)
+static void*
+wfaux(Altfid *f)
 {
-	if(f->busy)
-		Clunk(f);
-	f->client = nil;
-	f->service = nil;
-	f->qtype = Qroot;
-	f->busy = 1;
-	thdr.qid = mkqid(f);
-	return 0;
+	if(f->level < Qclients)
+		return nil;
+	else if(f->level < Qservices)
+		return f->client;
+	return f->service;
 }
 
-static char *
-Version(Fid*)
+static void
+fsmkqid(Qid *q, int level, void *aux)
 {
-	Fid *f;
-	for(f = fids; f; f = f->next)
-		if(f->busy)
-			Clunk(f);
-	if(rhdr.msize < 256)
-		return "message size too small";
-	if(rhdr.msize > sizeof(mdata))
-		thdr.msize = sizeof mdata;
-	else
-		thdr.msize = rhdr.msize;
-	thdr.version = "9P2000";
-	if(strncmp(rhdr.version, "9P", 2) != 0)
-		thdr.version = "unknown";
-	return 0;
+
+	q->type = 0;
+	q->vers = 0;
+	switch(level){
+	case Qroot:
+	case Qclients:
+	case Qservices:
+	case Qservice:
+		q->type = QTDIR;
+	default:
+		q->path = (level<<24) | (((uintptr)aux ^ time0) & 0x00ffffff);
+	}
+}
+
+static void
+fsmkdir(Dir *d, int level, void *aux)
+{
+	Service *sv;
+	char buf[1024];
+
+	memset(d, 0, sizeof(*d));
+	fsmkqid(&d->qid, level, aux);
+	d->mode = 0444;
+	d->atime = d->mtime = time0;
+	d->uid = estrdup(user);
+	d->gid = estrdup(user);
+	d->muid = estrdup(user);
+	if(d->qid.type & QTDIR)
+		d->mode |= DMDIR | 0111;
+	switch(level){
+	case Qclients:
+		snprint(buf, sizeof(buf), "%d", CLIENTID(aux));
+		d->name = estrdup(buf);
+		break;
+	case Qservice:
+		sv = (Service*)aux;
+		d->name = sv->name;
+		break;
+	case Qctl:
+	case Qsctl:
+	case Qclone:
+	case Qsclone:
+		d->mode = 0666;
+		if(0){
+	case Qinput:
+		d->mode = 0222;
+		}
+	default:
+		d->name = estrdup(nametab[level]);
+	}
+}
+
+static void
+fsattach(Req *r)
+{
+	Altfid *f;
+
+	if(r->ifcall.aname && r->ifcall.aname[0]){
+		respond(r, "invalid attach specifier");
+		return;
+	}
+	f = emalloc(sizeof(*f));
+	f->level = Qroot;
+	fsmkqid(&r->fid->qid, f->level, wfaux(f));
+	r->ofcall.qid = r->fid->qid;
+	r->fid->aux = f;
+	respond(r, nil);
+}
+
+static void
+fsstat(Req *r)
+{
+	Altfid *f;
+
+	f = r->fid->aux;
+	fsmkdir(&r->d, f->level, wfaux(f));
+	respond(r, nil);
 }
 
 static char*
-Walk(Fid *f)
+fswalk1(Fid *fid, char *name, Qid *qid)
 {
-	char *name, *err;
-	int i, j; //isclient, isservice
-	Fid *nf;
-	ulong qtype;
-
-	if(!f->busy)
-		return "walk of unused fid";
-
-	nf = nil;
-	qtype = f->qtype;
-	if(rhdr.fid != rhdr.newfid){
-		nf = findfid(rhdr.newfid);
-		if(nf->busy)
-			return "fid in use";
-		f = nf;
-	}
-	err = nil;
+	Altfid *f;
+	int i, j;
 	i = 0;
-	if(rhdr.nwname > 0){
-		// We want to state if we're in a client or a service here in state
-		for(; i<rhdr.nwname; i++){
-			if(i >= MAXWELEM){
-				err = "too many elements in path";
-				break;
-			}
-			name = rhdr.wname[i];
-			switch(qtype){
-			case Qroot:
-				if(strcmp(name, "..") == 0)
-					goto Accept;
-				// TODO: Check if we are at a client
-				if(f->client == nil)
-					goto Out;
-				qtype = Qclients;
-			Accept:
-				thdr.wqid[i] = mkqid(f);
-				break;
-			case Qclients:
-				if(strcmp(name, "..") == 0){
-					qtype = Qroot;
-					f->client = nil;
-					goto Accept;
+
+	if(!(fid->qid.type&QTDIR))
+		return "walk in non-directory";
+
+	f = fid->aux;
+	if(strcmp(name, "..")==0){
+		switch(f->level){
+		case Qroot:
+			break;
+		case Qclients:
+			freeclient(f->client);
+			f->client = nil;
+			break;
+		case Qservices:
+			f->level = Qroot;
+			break;
+		default:
+			if(f->level > Qservices)
+				f->level = Qservices;
+			else
+				f->level = Qclients;
+		}
+	} else if(strcmp(name, "services")==0){
+		i = Qservices;
+		goto Out;
+	} else {
+		if(nservice){
+			for(j=0; j < nservice; j++){
+				if(strcmp(name, service[j].name) == 0){
+					f->service = &service[j];
+					i = Qservice;
+					break;
 				}
-				for(j = Qclients + 1; j < Qmax; j++)
-					if(strcmp(name, qinfo[j]) == 0){
-						qtype = j;
-						break;
+			}
+		} else {
+			for(i = f->level+1; i < nelem(nametab); i++){
+				if(nametab[i]){
+					if(strcmp(name, nametab[i]) == 0)
+						goto Out;
+					// anything else?
+				}
+				if(i == Qclients){
+					j = atoi(name);
+					if(j >= 0 && j < nclient){
+						f->client = &client[j];
+						incref(f->client);
+						goto Out;
 					}
-				if(j < Qmax)
-					goto Accept;
-				goto Out;
-			//case Qservices:
-			//case Qservice:
-			default:
-				err = "file is not a directory";
-				goto Out;
+				}
 			}
 		}
-		Out:
-		if(i < rhdr.nwname && err == nil)
-			err = "file not found";
+Out:
+		if(i >= nelem(nametab))
+			return "directory entry not found";
+		f->level = i;
 	}
-
-	if(err != nil)
-		return err;
-	if(rhdr.fid != rhdr.newfid && i == rhdr.nwname){
-		nf->busy = 1;
-		nf->qtype = qtype;
-		nf->client = f->client;
-		nf->service = f->service;
-		//if(nf->client != nil)
-		//	incref(nf->client);
-	} else if (nf == nil && rhdr.nwname > 0){
-		Clunk(f);
-		f->busy = 1;
-		f->qtype = qtype;
-		//if(f->client != nil)
-		//	incref(f->client);
-	}
-	thdr.nwqid = i;
-	return 0;
-}
-
-static char *
-Clunk(Fid *f)
-{
-	f->busy = 0;
-	//freeservice, freeclient
-	f->service = nil;
-	f->client = nil;
+	fsmkqid(qid, f->level, wfaux(f));
+	fid->qid = *qid;
 	return nil;
 }
 
-static char *
-Open(Fid *f)
+static char*
+fsclone(Fid *oldfid, Fid *newfid)
 {
-	int mode;
-
-	if(!f->busy)
-		return "open of unused fid";
-	mode = rhdr.mode;
-
- 	// TODO: clone and sclone and feed
-	// with feed, set up the real fid
-	// with clone + sclone, return Qctl and Qsctl after creating each
-	// though we do want access to setting a name after initialization
-	// we can do numbered and just reject any matching names
-	thdr.qid = mkqid(f);
-	thdr.iounit = messagesize - IOHDRSZ;
-	return 0;
+	Altfid *f, *o;
+	o = oldfid->aux;
+	if(o == nil)
+		return "bad fid";
+	f = emalloc(sizeof(*f));
+	memmove(f, o, sizeof(*f));
+	if(f->client)
+		incref(f->client);
+	newfid->aux = f;
+	return nil;
 }
 
-static char *
-Create(Fid *f)
+static void
+fsopen(Req *r)
 {
-	USED(f);
-	return "permission denied";
-}
+	Altfid *f;
+	Client *cl;
+	Service *svc;
+	char buf[256];
 
-static char *
-Read(Fid *f)
-{
-	USED(f);
-	// switch on qtype, do the right thing.
-	// Qroot: we want clone, services, and [0..9] clients
-	// Qclient: we want all of our named files, etc
-	// Qservices: we want clone and named services
-	// Qservice: we want input, data, etc
-	return "Open";
-}
-
-static char *
-Write(Fid *f)
-{
-	USED(f);
-	// switch on qtype, do the write thing.
-	return "Chimken";
-}
-
-static char *
-Remove(Fid *f)
-{
-	Clunk(f);
-	return "permission denied";
-}
-
-static char *
-Stat(Fid *f)
-{
-	static uchar statbuf[1024];
-
-	if(!f->busy)
-		return "stat on unused fd";
-	thdr.nstat = dostat(f, statbuf, sizeof statbuf);
-	if(thdr.nstat <= BIT16SZ)
-		return "stat buffer too small";
-	thdr.stat = statbuf;
-	return 0;
-}
-
-static char *
-Wstat(Fid *f)
-{
-	//Dir d;
-	//int n;
-	//char buf[1024];
-	// TODO: Anything we want to allow here
-	USED(f);
-	return "permission denied";
-}
-
-static Qid
-mkqid(Fid *f)
-{
-	Qid q;
-
-	q.vers = 0;
-	q.path = f->qtype;
-	if(f->service || f->client)
-		q.path |= f->uniq * 0x100;
-
-	switch(f->qtype){
-	case Qservice:
-	case Qservices:
-	case Qclients:
-	case Qroot:
-		q.type = QTDIR;
-	default:
-		q.type = QTFILE;
+	// Switch and create on clones, etc
+	f = r->fid->aux;
+	cl = f->client;
+	svc = f->service;
+	USED(svc);
+	switch(f->level){
+	case Qclone:
+		if((cl = newclient()) == nil){
+			respond(r, "no more clients");
+			return;
+		}
+		f->level = Qctl;
+		f->client = cl;
+		fsmkqid(&r->fid->qid, f->level, wfaux(f));
+		r->ofcall.qid = r->fid->qid;
+		break;
+	case Qsclone:
+		if((svc = newservice()) == nil){
+			respond(r, "no more services");
+		}
+		f->level = Qsctl;
+		f->service = svc;
+		fsmkqid(&r->fid->qid, f->level, wfaux(f));
+		r->ofcall.qid = r->fid->qid;
+		break;
+	case Qfeed:
+		if(cl->current){
+			snprint(buf, sizeof(buf), "%s/%s", logdir, cl->current->feed);
+			print("%s\n", buf);
+			f->fd = open(buf, 0644);
+			f->foffset = 0;
+		}
 	}
-	return q;
+	respond(r, nil);
 }
 
 static int
-dostat(Fid *f, void *p, int n)
+rootgen(int i, Dir *d, void *)
 {
-	Dir d;
-
-	if(f->qtype == Qservice)
-		d.name = f->service->name;
-	// TODO: look up the n for the client if we're in client
-	else
-		d.name = qinfo[f->qtype];
-	d.uid = d.gid = d.muid = "none";
-	d.qid = mkqid(f);
-	if(d.qid.type & QTDIR)
-		d.mode = 0755|DMDIR;
-	else
-		d.mode = 0644;
-	d.atime = d.mtime = time(0);
-	d.length = 0;
-	return convD2M(&d, p, n);
+	i += Qroot+1;
+	if(i < Qclients){
+		fsmkdir(d, i, 0);
+		return 0;
+	}
+	i -= Qclients;
+	if(i < nclient){
+		fsmkdir(d, Qclients, &client[i]);
+		return 0;
+	}
+	// Final entry is just our services dir
+	if(i == nclient){
+		fsmkdir(d, Qservices, 0);
+		return 0;
+	}
+	return -1;
 }
 
-static Fid *
-findfid(int fid)
+static int
+servicesgen(int i, Dir *d, void *)
 {
-	Fid *f, *ff;
-
-	ff = nil;
-	for(f = fids; f; f = f->next)
-		if(f->fid == fid)
-			return f;
-		else if(!ff && !f->busy)
-			ff = f;
-	if(ff != nil){
-		ff->fid = fid;
-		return ff;
+	i += Qservices + 1;
+	if(i < Qservice){
+		fsmkdir(d, i, 0);
+		return 0;
 	}
+	i -= Qservices + 2;
+	if(i < nservice){
+		fsmkdir(d, Qservice, &service[i]);
+		return 0;
+	}
+	return -1;
+}
 
-	f = emalloc(sizeof *f);
-	f->fid = fid;
-	f->busy = 0;
-	f->client = nil;
-	f->service = nil;
-	f->next = fids;
-	fids = f;
-	return f;
+static int
+clientgen(int i, Dir *d, void *aux)
+{
+	// TODO: Mask the unusable files if we have no current buffer
+	i += Qclients+1;
+	if(i > Qinput)
+		return -1;
+	fsmkdir(d, i, aux);
+	return 0;
+}
+
+static int
+servicegen(int i, Dir *d, void *aux)
+{
+	i += Qservice+1;
+print("%d %d\n", i, Qmax);
+	if(i >= Qmax)
+		return -1;
+	fsmkdir(d, i, aux);
+	return 0;
 }
 
 static void
-io(int in, int out)
+fsread(Req *r)
 {
-	char *err;
+	char buf[1024];
+	Altfid *f;
+	Client *cl;
+	Service *svc;
+
+	f = r->fid->aux;
+	cl = f->client;
+	svc = f->service;
+	
+	if(f->level > Qctl && f->level < Qservices && !cl->current){
+		respond(r, "no current buffer selected");
+		return;
+	}
+
+	switch(f->level){
+	case Qroot:
+print("Root\n");
+		dirread9p(r, rootgen, nil);
+		respond(r, nil);
+		return;
+	case Qclients:
+print("Clients\n");
+		dirread9p(r, clientgen, nil);
+		respond(r, nil);
+		return;
+	case Qservices:
+print("Services\n");
+		dirread9p(r, servicesgen, nil);
+		respond(r, nil);
+		return;
+	case Qservice:
+print("Service\n");
+		dirread9p(r, servicegen, nil);
+		respond(r, nil);
+		return;
+	case Qtitle:
+		snprint(buf, sizeof(buf), "%s\n", cl->current->title);
+	String:
+		readstr(r, buf);
+		respond(r, nil);
+		return;
+	case Qctl: 
+		snprint(buf, sizeof(buf), "%d\n", CLIENTID(f->client));
+		goto String;
+	case Qstatus:
+		snprint(buf, sizeof(buf), "%s\n", cl->current->status);
+		goto String;
+	case Qaside:
+		snprint(buf, sizeof(buf), "%s\n", cl->current->aside);
+		goto String;
+	case Qsctl:
+		snprint(buf, sizeof(buf), "%s\n", svc->name);
+		goto String;
+	case Qfeed:
+		pread(f->fd, buf, sizeof(buf), f->foffset);
+		goto String;
+	case Qsinput:
+		// forward any pending input from client
+		// TODO: Channel for input?
+		break;
+	case Qnotify:
+		// TODO: notify fmt %N, install at start
+		//snprint(buf, sizeof(buf), "%N\n", svc->notify);
+		break;
+	case Qtabs:
+		// TODO: tabs fmt %T, install at start
+		//snprint(buf, sizeof(buf), "%T\n", svc);
+		goto String;
+		
+	}
+	respond(r, "not implemented");
+}
+
+static void
+fswrite(Req *r)
+{
 	int n;
+	Altfid *f;
+	char *s, *t;
 
-	while((n = read9pmsg(in, mdata, messagesize)) != 0){
-		if(n < 0)
-			fprint(2, "mount read: %r");
-		if(convM2S(mdata, n, &rhdr) != n)
-			fprint(2, "convM2S format error: %r");
-		thdr.data = (char*)mdata + IOHDRSZ;
-		thdr.fid = rhdr.fid;
-		if(!fcalls[rhdr.type])
-			err = "bad fcall request";
+	f = r->fid->aux;
+	switch(f->level){
+	case Qsctl:
+	case Qctl:
+		n = r->ofcall.count = r->ifcall.count;
+		s = emalloc(n+1);
+		memmove(s, r->ifcall.data, n);
+		while(n > 0 && strchr("\r\n", s[n-1]))
+			n--;
+		s[n] = 0;
+		// TODO: We don't use any of this in any meaningful way, remove t from calls
+		t = s;
+		while(*t && strchr(whitespace, *t)==0)
+			t++;
+		while(*t && strchr(whitespace, *t))
+			*t++ = 0;
+		if(f->level == Qctl)
+			t = clientctl(f->client, s, t);
 		else
-			err = (*fcalls[rhdr.type])(findfid(rhdr.fid));
-		thdr.tag = rhdr.tag;
-		thdr.type = rhdr.type + 1;
-		if(err){
-			thdr.type = Rerror;
-			thdr.ename = err;
-		}
-		n = convS2M(&thdr, mdata, messagesize);
-		if(write(out, mdata, n) != n)
-			fprint(2, "mount write\n");
+			t = servicectl(f->service, s, t);
+		free(s);
+		respond(r, t);
+		return;
+	case Qinput:
+		// TODO: User wrote a string to us, forward to server (cb?)
+		//f->svc->callback(r->ifcall.data, r->ifcall.count);
+		return;
 	}
+	respond(r, "not implemented");
 }
 
 static void
+fsflush(Req *r)
+{
+	respond(r, nil);
+}
+
+static void
+fsdestroyfid(Fid *fid)
+{
+	Altfid *f;
+
+	if(f = fid->aux){
+		fid->aux = nil;
+		if(f->client)
+			freeclient(f->client);
+		// TODO: uncomment so services hold open an FD to show their livelihood
+		//if(f->service)
+		//	freeservice(f->service);
+		free(f);
+	}	
+}
+
+static void
+fsstart(Srv*)
+{
+	/* Overwrite if we have one, force a reconnect of everything */
+	if(mtpt != nil)
+		unmount(nil, mtpt);
+}
+
+static void
+fsend(Srv*)
+{
+	postnote(PNGROUP, getpid(), "shutdown");
+	exits(nil);
+}
+
+Srv fs = 
+{
+	.start=fsstart,
+	.attach=fsattach,
+	.stat=fsstat,
+	.walk1=fswalk1,
+	.clone=fsclone,
+	.open=fsopen,
+	.read=fsread,
+	.write=fswrite,
+	.flush=fsflush,
+	.destroyfid=fsdestroyfid,
+	.end=fsend,
+};
+
+void
 usage(void)
 {
 	fprint(2, "usage: %s [-Dd] [-m mtpt] [-s service] [-l logdir]\n", argv0);
@@ -422,11 +534,10 @@ main(int argc, char *argv[])
 {
 	// We could use quotefmtinstall here
 	// add in tabs at very least
-	int p[2];
-
 	user = getuser();
 	mtpt = "/mnt/alt";
 	logdir = "/tmp/alt";
+	time0 = time(0);
 
 	ARGBEGIN {
 	case 'D': 
@@ -450,48 +561,7 @@ main(int argc, char *argv[])
 
 	argv0 = "alt/fs";
 
-	if(pipe(p) < 0)
-		sysfatal("Can't make pipe: %r");
-
 	create(logdir, OREAD, DMDIR | 0755);
-	switch(rfork(RFPROC|RFNAMEG|RFNOTEG|RFNOWAIT|RFENVG|RFFDG|RFMEM)){
-	case 0:
-		close(p[0]);
-		io(p[1], p[1]);
-		postnote(PNPROC, 1, "shutdown");
-		exits(0);
-	case -1:
-		sysfatal("fork");
-	default:
-		close(p[1]);
-		// TODO: We want to srv if we have srvpt
-		if(mount(p[0], -1, mtpt, MREPL|MCREATE, "") == -1)
-			sysfatal("can't mount: %r");
-		exits(0);
-	}
+	postmountsrv(&fs, srvpt, mtpt, MCREATE);
+	exits(nil); 
 }
-
-void*
-emalloc(int n)
-{
-	void *p;
-
-	if((p = malloc(n)) != nil){
-		memset(p, 0, n);
-		return p;
-	}
-	sysfatal("out of memory");
-}
-
-char*
-estrdup(char *s)
-{
-	char *d;
-	int n;
-
-	n = strlen(s)+1;
-	d = emalloc(n);
-	memmove(d, s, n);
-	return d;
-}
-
