@@ -1,18 +1,34 @@
-/mnt/altid/clone
-/mnt/altid/stats
-/mnt/altid/[0-9]
-/mnt/altid/[0-9]/feed
-/mnt/altid/[0-9]/...
-
-/mnt/altid/service
-/mnt/altid/service/clone
-/mnt/altid/service/[0-9]
-
-Can read stats for list of servers, etc
-Clone, get your n back
-/mnt/altid/1/ctl, write which service to connect to
-the fs populates with that, you can read in tabs to see what buffers are available
-
-Commands:
+ Commands:
  - markup, will need to import the state machine parser to pre-parse the output into just text
  - tabs could be a command?
+
+Post a descriptor to /srv for each given service, that a client can connect into
+alt/fs sname, then in that namespace run the service binary 
+It mounts to /mnt/alt, which is what the service reads and writes to, then the client will do the other side
+
+if(isInitial) could be set to true on spinup, then we attach and flag appropriately; then negate isInitial so we can always assume a client attach after
+
+ - Do a Srv + postmountsrv in main, then Srv + postsrv or listensrv in client.c which is fired off after attach from a service and initialization is complete
+Client
+
+```
+#!/bin/rc
+
+# Example /bin/rc/service/tcp18111
+mount '#s/libera' /mnt/irc
+exec /bin/exportfs -r /mnt/irc
+```
+
+Connects with aname = desired buffer, or gets just whichever is first (usually a `server`, but just in added-order)
+ - if no buffers exist, exit error. We don't support hung states!
+
+Service
+
+`/mnt/alt` is served by the alt/fs
+- service will write the service name to `/mnt/alt/clone`
+	- If a service exists in /srv by that name, an error will be returned. rm the service first!
+	- If the name is not valid filechars, an error will be returned (this is used in /srv, after all)
+- the service reads and writes to the returned fd until it closes, signalling completion
+
+
+Add a stats/info file to /mnt/alt? something anyways.

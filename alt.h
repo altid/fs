@@ -1,16 +1,15 @@
-#define	CLIENTID(c)	((int)(((Client*)(c)) - client))
-
 typedef struct Buffer Buffer;
 typedef struct Notify Notify;
-typedef struct Service Service;
-typedef struct Client Client;
 
 struct Buffer
 {
 	char	title[256];
 	char	status[256];
-	char	feed[256];
 	char	*aside;
+	int	fd;
+	Notify	*notify;
+	// callback function from server for processing input
+	Buffer	*next;
 };
 
 struct Notify
@@ -19,38 +18,35 @@ struct Notify
 	Notify	*next;
 };
 
-struct Service
-{
-	Buffer	*buffer;
-	Notify	*notifications;
-	//input callback function here
-	char	*name;
-	Service	*next;
-};
-
-struct Client
-{
-	Buffer	*current;
-	int	showmarkdown;
-	int	ref;
-};
-
-Client* newclient(void);
-void freeclient(Client*);
-char* clientctl(Client*, char*, char*);
-Service* newservice(void);
-void freeservice(Service*);
-char* servicectl(Service*, char*, char*);
 void* emalloc(int);
 char* estrdup(char*);
 
 char *mtpt;
 char *srvpt;
 char *user;
-long time0;
 char *logdir;
-Client client[256];
-int nclient;
-Service service[64];
-int nservice;
 int debug;
+
+void clattach(Req*);
+void clstat(Req*);
+char *clwalk1(Fid*, char*, Qid*);
+char *clclone(Fid*, Fid*);
+void clopen(Req*);
+void clread(Req*);
+void clwrite(Req*);
+void clflush(Req*);
+void cldestroyfid(Fid*);
+void clstart(Srv*);
+void clend(Srv*);
+
+void svcattach(Req*);
+void svcstat(Req*);
+char *svcwalk1(Fid*, char*, Qid*);
+char *svcclone(Fid*, Fid*);
+void svcopen(Req*);
+void svcread(Req*);
+void svcwrite(Req*);
+void svcflush(Req*);
+void svcdestroyfid(Fid*);
+void svcstart(Srv*);
+void svcend(Srv*);
