@@ -3,13 +3,19 @@ typedef struct Notify Notify;
 
 struct Buffer
 {
-	char	title[256];
-	char	status[256];
+	char	*name;
+	char	*title;
+	char	*status;
 	char	*aside;
 	int	fd;
+	long	offset;
 	Notify	*notify;
-	// callback function from server for processing input
+
 	Buffer	*next;
+
+	// Passed by the service
+	void	(*input)(char*);
+	char	*(*ctl)(char*, char*);
 };
 
 struct Notify
@@ -17,6 +23,12 @@ struct Notify
 	char	*data;
 	Notify	*next;
 };
+
+Buffer *bufferCreate(void(*fn)(char*), char*(*fn)(char*, char*));
+Buffer *bufferSearch(Buffer*, char*);
+char *bufferDrop(Buffer*, char*);
+char *bufferPush(Buffer*, char*);
+void bufferDestroy(Buffer*);
 
 void* emalloc(int);
 char* estrdup(char*);

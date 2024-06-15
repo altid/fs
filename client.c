@@ -53,7 +53,7 @@ static int nclient;
 static int time0;
 
 static Client*
-newclient(void)
+newclient(char *aname)
 {
 	Client *cl;
 	int i;
@@ -68,7 +68,7 @@ newclient(void)
 	cl = &client[i];
 	cl->ref++;
 
-	cl->current = nil;
+	cl->current = bufferSearch(root, aname);;
 	cl->showmarkdown = 0;
 
 	return cl;
@@ -122,14 +122,8 @@ clattach(Req *r)
 {
 	Clfid *f;
 
-	// TODO: We want to actually use the aname here
-	if(r->ifcall.aname && r->ifcall.aname[0]){
-		print(r->ifcall.aname);
-		// TODO: Check and establish buffer, abort if it's not available
-	} else {
-		// TODO: If we have any valid buffers, we take the top of the list here
-	}
 	f = emalloc(sizeof(*f));
+	f->cl = newclient(r->ifcall.aname);
 	f->level = Qcroot;
 	clmkqid(&r->fid->qid, f->level, nil);
 	r->ofcall.qid = r->fid->qid;
@@ -193,8 +187,14 @@ clclone(Fid *oldfid, Fid *newfid)
 void
 clopen(Req *r)
 {
+	Clfid *f;
+
+	f = r->fid->aux;
+	if(f->level == Qfeed){
+		// open the actual backing file
+		// don't double open if already open though.
+	}
 	respond(r, nil);
-	// Use feed for fid, with offset as well.
 }
 
 static int
@@ -212,6 +212,7 @@ void
 clread(Req *r)
 {
 	Clfid *f;
+	char buf[1024];
 
 	f = r->fid->aux;
 	switch(f->level){
@@ -219,7 +220,19 @@ clread(Req *r)
 		dirread9p(r, rootgen, f->cl);
 		respond(r, nil);
 		return;
+	case Qtitle:
+		if(f->cl->current){
+			snprint(buf, sizeof(buf), "%s", f->cl->current->title);
+			readstr(r, buf);
+			respond(r, nil);
+		} else
+			respond(r, "no buffer selected");
+		return;
+	//case Qstatus:
+	//case Qaside:
+	//case Qnotify:
 	//case Qfeed:
+		// return a pread with our offset on our open fid
 	}
 	respond(r, "not implemented");
 }
@@ -227,8 +240,38 @@ clread(Req *r)
 void
 clwrite(Req *r)
 {
-	// TODO: Input, ctl
-	respond(r, nil);
+	Clfid *f;
+	char *s, *t;
+	int n;
+
+	f = r->fid->aux;
+	switch(f->level){
+	case Qctl:
+		n = r->ofcall.count = r->ifcall.count;
+		s = emalloc(n+1);
+		memmove(s, r->ifcall.data, n);
+		t = strtok(s, " ");
+		s = strtok(nil, "\n");
+		if(strcmp(t, "buffer") == 0){
+			f->cl->current = bufferSearch(root, s);
+			r->fid->aux = f;
+			respond(r, nil);
+		} else
+			respond(r, root->ctl(t, s));
+		return;
+	case Qinput:
+		if(!f->cl || !f->cl->current){
+			respond(r, "No buffer selected");
+			return;
+		}
+		n = r->ofcall.count = r->ifcall.count;
+		s = emalloc(n+1);
+		memmove(s, r->ifcall.data, n);
+		f->cl->current->input(s);
+		respond(r, nil);
+		return;
+	}
+	respond(r, "not implemented");
 }
 
 void
@@ -253,6 +296,8 @@ cldestroyfid(Fid *fid)
 void
 clstart(Srv *s)
 {
+	root = emalloc(sizeof(*root));
+	USED(root);
 	root = (Buffer*)s->aux;
 	time0 = time(0);
 }

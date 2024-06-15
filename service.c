@@ -75,10 +75,9 @@ newservice(void)
 	if(i == nservice)
 		nservice++;
 	svc = &service[i];
-	svc->ref++;
 
-	// TODO: Instantiate a proper base
-	svc->base = nil;
+	svc->ref++;
+	svc->base = bufferCreate(nil, nil);
 	svc->isInitialized = 0;
 	
 	return svc;
@@ -300,11 +299,44 @@ svcread(Req *r)
 	respond(r, "not implemented");
 }
 
+static char*
+svcctl(Service *svc, char *s, char *data)
+{
+	// Hashing the buffername would be nice
+	Buffer *b;
+	char *cmd, *targ;
+
+	cmd = strtok(s, " ");
+	targ = strtok(nil, "\n");
+	if(strcmp(cmd, "feed")==0) {
+		// Updoot teh feedfile
+	} else if(strcmp(cmd, "status")==0){
+		if(b = bufferSearch(svc->base, targ)) {
+			b->status = data;
+			return nil;
+		}
+		return "buffer not found";
+	} else if(strcmp(cmd, "title")==0){
+		if(b = bufferSearch(svc->base, targ)) {
+			b->title = data;
+			return nil;
+		}
+		return "buffer not found";
+	} else if(strcmp(cmd, "create")==0)
+		return bufferPush(svc->base, targ);
+	else if(strcmp(cmd, "close")==0)
+		return bufferDrop(svc->base, targ);
+	else
+		// snprintf not found: %s cmd
+		return "command not found";
+	return nil;
+}
+
 void
 svcwrite(Req *r)
 {
 	int n;
-	char *s;
+	char *s, *t;
 	Svcfid *f;
 
 	f = r->fid->aux;
@@ -313,16 +345,19 @@ svcwrite(Req *r)
 		n = r->ofcall.count = r->ifcall.count;
 		s = emalloc(n+1);
 		memmove(s, r->ifcall.data, n);
+		while(n > 0 && strchr("\r\n", s[n-1]))
+			n--;
 		s[n] = 0;
-		if(n > 0 && s[n-1] == '\n')
-			s[n-1] = 0;
 		if(f->svc->isInitialized){
-			print("Command: %s\n", s);
-			
-			respond(r, nil);
+			t = s;
+			while(*t && strchr("\t\r\n", *t)==0)
+				t++;
+			while(*t && strchr("\t\r\n", *t))
+				*t++ = 0;
+			t = svcctl(f->svc, s, t);
+			respond(r, t);
 		} else {
 			f->svc->name = estrdup(s);
-			// TODO: Buffers will have an input cb from the server
 			clfs.aux = f->svc->base;
 			f->svc->childpid = threadpostsrv(&clfs, s);
 			if(f->svc->childpid >= 0){
