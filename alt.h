@@ -4,9 +4,9 @@ typedef struct Notify Notify;
 struct Buffer
 {
 	char	*name;
-	char	*title;
-	char	*status;
-	char	*aside;
+	char	title[1024];
+	char	status[1024];
+	char	aside[1024];
 	int	fd;
 	Notify	*notify;
 

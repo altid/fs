@@ -50,6 +50,9 @@ bufferPush(Buffer *base, char *name)
 	b->name = estrdup(name);
 	b->notify = nil;
 	b->input = base->input;
+	memset(b->title, 0, sizeof(b->title));
+	memset(b->status, 0, sizeof(b->status));
+	memset(b->aside, 0, sizeof(b->aside));
 	snprint(p, sizeof(p), "%s/%s/%s", logdir, base->name, name);
 	if(access(p, 0) == 0)
 		b->fd = open(p, OWRITE);

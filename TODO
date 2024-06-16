@@ -1,15 +1,6 @@
- Commands:
- - markup, will need to import the state machine parser to pre-parse the output into just text
- - tabs could be a command?
+## Client
 
-Post a descriptor to /srv for each given service, that a client can connect into
-alt/fs sname, then in that namespace run the service binary 
-It mounts to /mnt/alt, which is what the service reads and writes to, then the client will do the other side
-
-if(isInitial) could be set to true on spinup, then we attach and flag appropriately; then negate isInitial so we can always assume a client attach after
-
- - Do a Srv + postmountsrv in main, then Srv + postsrv or listensrv in client.c which is fired off after attach from a service and initialization is complete
-Client
+### Brief overview
 
 ```
 #!/bin/rc
@@ -22,13 +13,31 @@ exec /bin/exportfs -r /mnt/irc
 Connects with aname = desired buffer, or gets just whichever is first (usually a `server`, but just in added-order)
  - if no buffers exist, exit error. We don't support hung states!
 
-Service
+### TODO: 
 
-`/mnt/alt` is served by the alt/fs
-- service will write the service name to `/mnt/alt/clone`
+- Add in command to toggle markup 
+
+## Service
+
+### Brief overview 
+
+- service reads from /mnt/alt/clone to get n
+- service will write the service name to `/mnt/alt/n/ctl`
 	- If a service exists in /srv by that name, an error will be returned. rm the service first!
 	- If the name is not valid filechars, an error will be returned (this is used in /srv, after all)
-- the service reads and writes to the returned fd until it closes, signalling completion
+	- the service reads and writes to the returned fd until it closes, signalling completion
 
+### TODO
 
-Add a stats/info file to /mnt/alt? something anyways.
+- handle `input` and `ctl` callbacks!
+- Add a stats/info file to root of /mnt/alt
+
+## Notifications:
+
+- Create and update them, integrate with tabs
+- Install fmt for printing
+
+## Tabs:
+
+- Track unread from clients
+- Install fmt for printing

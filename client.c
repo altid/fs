@@ -8,25 +8,27 @@
 
 enum {
 	Qcroot,
+		Qtabs,
+		Qctl,
+		Qinput,
 		Qtitle,
 		Qstatus,
 		Qaside,
 		Qfeed,
-		Qinput,
 		Qnotify,
-		Qctl,
 	Qmax,
 };
 
 static char *cltab[] = {
 	"/",
+		"tabs",
+		"ctl",
+		"input",
 		"title",
 		"status",
 		"aside",
 		"feed",
-		"input",
 		"notify",
-		"ctl",
 	nil,
 };
 
@@ -207,6 +209,7 @@ void
 clread(Req *r)
 {
 	Clfid *f;
+	Notify *np;
 	char buf[1024];
 
 	f = r->fid->aux;
@@ -215,26 +218,47 @@ clread(Req *r)
 		dirread9p(r, rootgen, f->cl);
 		respond(r, nil);
 		return;
-	case Qtitle:
-		if(f->cl->current){
-			memset(buf, 0, sizeof(buf));
-			snprint(buf, sizeof(buf), "%s", f->cl->current->title);
-			readstr(r, buf);
-			respond(r, nil);
-		} else
-			respond(r, "no buffer selected");
-		return;
-	//case Qstatus:
-	//case Qaside:
-	//case Qnotify:
 	case Qfeed:
 		memset(buf, 0, sizeof(buf));
 		pread(f->cl->fd, buf, sizeof(buf), f->cl->offset);
+String:
 		readstr(r, buf);
 		respond(r, nil);
 		return;
+	case Qtitle:
+		if(f->cl->current && f->cl->current->title){
+			memset(buf, 0, sizeof(buf));
+			snprint(buf, sizeof(buf), "%s", f->cl->current->title);
+			goto String;
+		}
+	case Qstatus:
+		if(f->cl->current && f->cl->current->status){
+			memset(buf, 0, sizeof(buf));
+			snprint(buf, sizeof(buf), "%s", f->cl->current->status);
+			goto String;
+		}
+	case Qaside:
+		if(f->cl->current && f->cl->current->aside){
+			memset(buf, 0, sizeof(buf));
+			snprint(buf, sizeof(buf), "%s", f->cl->current->aside);
+			goto String;
+		}
+	case Qnotify:
+		if(f->cl->current && f->cl->current->notify){
+			memset(buf, 0, sizeof(buf));
+			for(np = f->cl->current->notify; np->next; np = np->next)
+				// TODO: Really test this out. this likely overwrites what we have
+				snprint(buf, sizeof(buf), "%s\n", np->data);
+			goto String;
+		}
+	//case Qtabs:
+	// Iterate through base and show up all 'o them
+		
 	}
-	respond(r, "not implemented");
+	if(!f->cl->current)
+		respond(r, "no buffer selected");
+	else
+		respond(r, "no data available");
 }
 
 void
@@ -303,6 +327,7 @@ void
 clstart(Srv *s)
 {
 	root = emalloc(sizeof(*root));
+	USED(root);
 	root = (Buffer*)s->aux;
 	time0 = time(0);
 }
