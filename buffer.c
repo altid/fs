@@ -37,6 +37,7 @@ char *
 bufferPush(Buffer *base, char *name)
 {
 	Buffer *b, *ep;
+	char p[1024];
 
 	for(ep = base; ep->next; ep = ep->next){
 		if(ep && strcmp(ep->name, name) == 0)
@@ -49,6 +50,12 @@ bufferPush(Buffer *base, char *name)
 	b->name = estrdup(name);
 	b->notify = nil;
 	b->input = base->input;
+	snprint(p, sizeof(p), "%s/%s/%s", logdir, base->name, name);
+	if(access(p, 0) == 0)
+		b->fd = open(p, OWRITE);
+	else
+		b->fd = create(p, OWRITE, 0644);
+	seek(b->fd, 0, 2);
 	ep->next = b;
 
 	return nil;
@@ -71,7 +78,7 @@ bufferCreate(void (*input)(char*), char *(*ctl)(char*, char*))
 	Buffer *b;
 
 	b = emalloc(sizeof(*b));
-	b->name = "root";
+	b->name = nil;;
 	b->input = input;
 	b->ctl = ctl;
 	b->notify = nil;

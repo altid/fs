@@ -8,7 +8,6 @@ struct Buffer
 	char	*status;
 	char	*aside;
 	int	fd;
-	long	offset;
 	Notify	*notify;
 
 	Buffer	*next;

@@ -44,6 +44,8 @@ struct Client
 	Ref;
 
 	Buffer	*current;
+	int	fd;
+	int	offset;
 	int	showmarkdown;
 };
 
@@ -187,13 +189,6 @@ clclone(Fid *oldfid, Fid *newfid)
 void
 clopen(Req *r)
 {
-	Clfid *f;
-
-	f = r->fid->aux;
-	if(f->level == Qfeed){
-		// open the actual backing file
-		// don't double open if already open though.
-	}
 	respond(r, nil);
 }
 
@@ -222,6 +217,7 @@ clread(Req *r)
 		return;
 	case Qtitle:
 		if(f->cl->current){
+			memset(buf, 0, sizeof(buf));
 			snprint(buf, sizeof(buf), "%s", f->cl->current->title);
 			readstr(r, buf);
 			respond(r, nil);
@@ -231,8 +227,12 @@ clread(Req *r)
 	//case Qstatus:
 	//case Qaside:
 	//case Qnotify:
-	//case Qfeed:
-		// return a pread with our offset on our open fid
+	case Qfeed:
+		memset(buf, 0, sizeof(buf));
+		pread(f->cl->fd, buf, sizeof(buf), f->cl->offset);
+		readstr(r, buf);
+		respond(r, nil);
+		return;
 	}
 	respond(r, "not implemented");
 }
@@ -241,7 +241,7 @@ void
 clwrite(Req *r)
 {
 	Clfid *f;
-	char *s, *t;
+	char *s, *t, path[1024];
 	int n;
 
 	f = r->fid->aux;
@@ -253,7 +253,13 @@ clwrite(Req *r)
 		t = strtok(s, " ");
 		s = strtok(nil, "\n");
 		if(strcmp(t, "buffer") == 0){
+			if(f->cl->fd)
+				close(f->cl->fd);
 			f->cl->current = bufferSearch(root, s);
+			memset(path, sizeof(path), 0);
+			snprint(path, sizeof(path), "%s/%s/%s", logdir, root->name, s);
+			f->cl->fd = open(path, OREAD);
+			f->cl->offset = 0;
 			r->fid->aux = f;
 			respond(r, nil);
 		} else
@@ -297,7 +303,6 @@ void
 clstart(Srv *s)
 {
 	root = emalloc(sizeof(*root));
-	USED(root);
 	root = (Buffer*)s->aux;
 	time0 = time(0);
 }

@@ -129,6 +129,7 @@ svcmkdir(Dir *d, int level, void *aux)
 		d->mode |= DMDIR | 0111;
 	switch(level){
 	case Qservices:
+		memset(buf, 0, sizeof(buf));
 		snprint(buf, sizeof(buf), "%d", SERVICEID(aux));
 		d->name = estrdup(buf);
 		break;
@@ -291,6 +292,7 @@ svcread(Req *r)
 		respond(r, nil);
 		return;
 	case Qctl:
+		memset(buf, 0, sizeof(buf));
 		snprint(buf, sizeof(buf), "%d\n", SERVICEID(f->svc));
 		readstr(r, buf);
 		respond(r, nil);
@@ -302,14 +304,19 @@ svcread(Req *r)
 static char*
 svcctl(Service *svc, char *s, char *data)
 {
-	// Hashing the buffername would be nice
+	// Probably notifications as well?
 	Buffer *b;
 	char *cmd, *targ;
 
 	cmd = strtok(s, " ");
 	targ = strtok(nil, "\n");
 	if(strcmp(cmd, "feed")==0) {
-		// Updoot teh feedfile
+		if(b = bufferSearch(svc->base, targ)) {
+			seek(b->fd, 0, 2);
+			write(b->fd, data, strlen(data));
+			return nil;
+		}
+		return "buffer not found";
 	} else if(strcmp(cmd, "status")==0){
 		if(b = bufferSearch(svc->base, targ)) {
 			b->status = data;
@@ -322,6 +329,18 @@ svcctl(Service *svc, char *s, char *data)
 			return nil;
 		}
 		return "buffer not found";
+	} else if(strcmp(cmd, "status")==0){
+		if(b = bufferSearch(svc->base, targ)) {
+			b->status = data;
+			return nil;
+		}
+		return "buffer not found";
+	} else if(strcmp(cmd, "aside")==0){
+		if(b = bufferSearch(svc->base, targ)) {
+			b->aside = data;
+			return nil;
+		}
+		return "buffer not found";
 	} else if(strcmp(cmd, "create")==0)
 		return bufferPush(svc->base, targ);
 	else if(strcmp(cmd, "close")==0)
@@ -329,7 +348,6 @@ svcctl(Service *svc, char *s, char *data)
 	else
 		// snprintf not found: %s cmd
 		return "command not found";
-	return nil;
 }
 
 void
@@ -338,6 +356,7 @@ svcwrite(Req *r)
 	int n;
 	char *s, *t;
 	Svcfid *f;
+	char path[1024];
 
 	f = r->fid->aux;
 
@@ -357,7 +376,12 @@ svcwrite(Req *r)
 			t = svcctl(f->svc, s, t);
 			respond(r, t);
 		} else {
+			// Set a short limit on this probably
 			f->svc->name = estrdup(s);
+			f->svc->base->name = estrdup(s);
+			memset(path, 0, sizeof(path));
+			snprint(path, sizeof(path), "%s/%s", logdir, s);
+			close(create(path, OREAD, DMDIR | 0755));
 			clfs.aux = f->svc->base;
 			f->svc->childpid = threadpostsrv(&clfs, s);
 			if(f->svc->childpid >= 0){
