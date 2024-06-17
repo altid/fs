@@ -52,6 +52,7 @@ struct Service
 {
 	Ref;
 
+	Channel	*cmds;
 	Buffer	*base;
 	char	*name;
 	int	isInitialized;
@@ -77,7 +78,11 @@ newservice(void)
 	svc = &service[i];
 
 	svc->ref++;
-	svc->base = bufferCreate(nil, nil);
+	// TODO: Eventually create send and receive for return a string from commands
+	// NOTE: If you're sending more commands than this before they are processed, up this number
+	// But also it might be time to question your design, because commands really should not be taking long
+	svc->cmds = chancreate(1024, 16);
+	svc->base = bufferCreate(svc->cmds);
 	svc->isInitialized = 0;
 	
 	return svc;
@@ -88,6 +93,7 @@ freeservice(Service *s)
 {
 	if(s == nil)
 		return;
+	chanfree(s->cmds);
 	memset(s, 0, sizeof(*s));
 }
 
@@ -293,10 +299,17 @@ svcread(Req *r)
 		return;
 	case Qctl:
 		memset(buf, 0, sizeof(buf));
-		snprint(buf, sizeof(buf), "%d\n", SERVICEID(f->svc));
-		readstr(r, buf);
+		// NOTE: This stays here so we always get a good ID back on the client from the initial read
+		if(!f->svc->isInitialized) {
+			snprint(buf, sizeof(buf), "%d\n", SERVICEID(f->svc));
+			readstr(r, buf);
+		} else {
+			recv(f->svc->cmds, buf);
+			print("%s\n", buf);
+		}
 		respond(r, nil);
 		return;
+
 	}
 	respond(r, "not implemented");
 }
@@ -319,35 +332,37 @@ svcctl(Service *svc, char *s, char *data)
 		return "buffer not found";
 	} else if(strcmp(cmd, "status")==0){
 		if(b = bufferSearch(svc->base, targ)) {
-			b->status = data;
+			strcpy(b->status, data);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "title")==0){
 		if(b = bufferSearch(svc->base, targ)) {
-			b->title = data;
+			strcpy(b->title, data);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "status")==0){
 		if(b = bufferSearch(svc->base, targ)) {
-			b->status = data;
+			strcpy(b->status, data);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "aside")==0){
 		if(b = bufferSearch(svc->base, targ)) {
-			b->aside = data;
+			strcpy(b->aside, data);
 			return nil;
 		}
 		return "buffer not found";
+	} else if(strcmp(cmd, "notify")==0){
+		// Create notification here
+		return "not yet implemented";
 	} else if(strcmp(cmd, "create")==0)
 		return bufferPush(svc->base, targ);
 	else if(strcmp(cmd, "close")==0)
 		return bufferDrop(svc->base, targ);
-	else
-		// snprintf not found: %s cmd
-		return "command not found";
+	else 
+		return "command not supported";
 }
 
 void
@@ -408,8 +423,8 @@ svcdestroyfid(Fid *fid)
 	Svcfid *f;
 
 	if(f = fid->aux){
-		//if(f->svc && f->svc->childpid)
-		//	postnote(PNGROUP, f->svc->childpid, "shutdown");
+		if(f->svc && f->svc->childpid)
+			postnote(PNGROUP, f->svc->childpid, "shutdown");
 		// TODO: Uncomment this after we are good to go, this is our keepalive roughly
 		//fid->aux = nil;
 		//if(f->svc)

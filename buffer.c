@@ -49,7 +49,6 @@ bufferPush(Buffer *base, char *name)
 	b = emalloc(sizeof(*b));
 	b->name = estrdup(name);
 	b->notify = nil;
-	b->input = base->input;
 	memset(b->title, 0, sizeof(b->title));
 	memset(b->status, 0, sizeof(b->status));
 	memset(b->aside, 0, sizeof(b->aside));
@@ -76,14 +75,16 @@ bufferSearch(Buffer *base, char *name)
 }
 
 Buffer*
-bufferCreate(void (*input)(char*), char *(*ctl)(char*, char*))
+bufferCreate(Channel *cmds)
 {
 	Buffer *b;
 
 	b = emalloc(sizeof(*b));
-	b->name = nil;;
-	b->input = input;
-	b->ctl = ctl;
+	b->name = nil;
+	memset(b->title, 0, sizeof(b->title));
+	memset(b->status, 0, sizeof(b->status));
+	memset(b->aside, 0, sizeof(b->aside));
+	b->cmds = cmds;
 	b->notify = nil;
 	b->next = nil;
 

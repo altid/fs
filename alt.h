@@ -8,13 +8,10 @@ struct Buffer
 	char	status[1024];
 	char	aside[1024];
 	int	fd;
+	Channel	*cmds;
 	Notify	*notify;
 
 	Buffer	*next;
-
-	// Passed by the service
-	void	(*input)(char*);
-	char	*(*ctl)(char*, char*);
 };
 
 struct Notify
@@ -23,7 +20,7 @@ struct Notify
 	Notify	*next;
 };
 
-Buffer *bufferCreate(void(*fn)(char*), char*(*fn)(char*, char*));
+Buffer *bufferCreate(Channel*);
 Buffer *bufferSearch(Buffer*, char*);
 char *bufferDrop(Buffer*, char*);
 char *bufferPush(Buffer*, char*);

@@ -15,7 +15,8 @@ Connects with aname = desired buffer, or gets just whichever is first (usually a
 
 ### TODO: 
 
-- Add in command to toggle markup 
+- Add in command to toggle markup
+- Blocking reads for feed, potentially a cb to clear out unread counts
 
 ## Service
 
@@ -29,7 +30,6 @@ Connects with aname = desired buffer, or gets just whichever is first (usually a
 
 ### TODO
 
-- handle `input` and `ctl` callbacks!
 - Add a stats/info file to root of /mnt/alt
 
 ## Notifications:
@@ -39,5 +39,5 @@ Connects with aname = desired buffer, or gets just whichever is first (usually a
 
 ## Tabs:
 
-- Track unread from clients
+- list available buffers with unread counts, add notify `!` when applicable
 - Install fmt for printing

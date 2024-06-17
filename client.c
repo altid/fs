@@ -47,7 +47,6 @@ struct Client
 
 	Buffer	*current;
 	int	fd;
-	int	offset;
 	int	showmarkdown;
 };
 
@@ -72,7 +71,7 @@ newclient(char *aname)
 	cl = &client[i];
 	cl->ref++;
 
-	cl->current = bufferSearch(root, aname);;
+	cl->current = bufferSearch(root, aname);
 	cl->showmarkdown = 0;
 
 	return cl;
@@ -211,6 +210,7 @@ clread(Req *r)
 	Clfid *f;
 	Notify *np;
 	char buf[1024];
+	int n;
 
 	f = r->fid->aux;
 	switch(f->level){
@@ -219,17 +219,23 @@ clread(Req *r)
 		respond(r, nil);
 		return;
 	case Qfeed:
-		memset(buf, 0, sizeof(buf));
-		pread(f->cl->fd, buf, sizeof(buf), f->cl->offset);
-String:
-		readstr(r, buf);
+		// TODO: We could read a channel here and not respond until we have new data
+		// This currently does not block for input, but we want it to
+		n = pread(f->cl->fd, buf, sizeof(buf), r->ifcall.offset);
+		if(n){
+			r->ofcall.count = n - 1;
+			memmove(r->ofcall.data, buf, r->ofcall.count);
+		}
 		respond(r, nil);
 		return;
 	case Qtitle:
 		if(f->cl->current && f->cl->current->title){
 			memset(buf, 0, sizeof(buf));
 			snprint(buf, sizeof(buf), "%s", f->cl->current->title);
-			goto String;
+String:
+			readstr(r, buf);
+			respond(r, nil);
+			return;	
 		}
 	case Qstatus:
 		if(f->cl->current && f->cl->current->status){
@@ -247,7 +253,7 @@ String:
 		if(f->cl->current && f->cl->current->notify){
 			memset(buf, 0, sizeof(buf));
 			for(np = f->cl->current->notify; np->next; np = np->next)
-				// TODO: Really test this out. this likely overwrites what we have
+				// TODO: Move to fmt specifier for these
 				snprint(buf, sizeof(buf), "%s\n", np->data);
 			goto String;
 		}
@@ -283,11 +289,14 @@ clwrite(Req *r)
 			memset(path, sizeof(path), 0);
 			snprint(path, sizeof(path), "%s/%s/%s", logdir, root->name, s);
 			f->cl->fd = open(path, OREAD);
-			f->cl->offset = 0;
 			r->fid->aux = f;
 			respond(r, nil);
-		} else
-			respond(r, root->ctl(t, s));
+		} else {
+			snprint(path, sizeof(path), "%s %s", t, s);
+			send(root->cmds, path);
+			// TODO: We will rcv a response
+			respond(r, nil);
+		}
 		return;
 	case Qinput:
 		if(!f->cl || !f->cl->current){
@@ -295,9 +304,9 @@ clwrite(Req *r)
 			return;
 		}
 		n = r->ofcall.count = r->ifcall.count;
-		s = emalloc(n+1);
-		memmove(s, r->ifcall.data, n);
-		f->cl->current->input(s);
+		n += strlen(f->cl->current->name) + 7;
+		snprint(path, n, "input %s\n%s", f->cl->current->name, r->ifcall.data);
+		send(root->cmds, path);
 		respond(r, nil);
 		return;
 	}
