@@ -78,7 +78,6 @@ newservice(void)
 	svc = &service[i];
 
 	svc->ref++;
-	// TODO: Eventually create send and receive for return a string from commands
 	// NOTE: If you're sending more commands than this before they are processed, up this number
 	// But also it might be time to question your design, because commands really should not be taking long
 	svc->cmds = chancreate(1024, 16);

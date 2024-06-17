@@ -1,6 +1,5 @@
-## Client
 
-### Brief overview
+## Listeners Documentation
 
 ```
 #!/bin/rc
@@ -10,27 +9,10 @@ mount '#s/libera' /mnt/irc
 exec /bin/exportfs -r /mnt/irc
 ```
 
-Connects with aname = desired buffer, or gets just whichever is first (usually a `server`, but just in added-order)
- - if no buffers exist, exit error. We don't support hung states!
-
-### TODO: 
+## Client
 
 - Add in command to toggle markup
 - Blocking reads for feed, potentially a cb to clear out unread counts
-
-## Service
-
-### Brief overview 
-
-- service reads from /mnt/alt/clone to get n
-- service will write the service name to `/mnt/alt/n/ctl`
-	- If a service exists in /srv by that name, an error will be returned. rm the service first!
-	- If the name is not valid filechars, an error will be returned (this is used in /srv, after all)
-	- the service reads and writes to the returned fd until it closes, signalling completion
-
-### TODO
-
-- Add a stats/info file to root of /mnt/alt
 
 ## Notifications:
 

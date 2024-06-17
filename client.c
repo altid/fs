@@ -294,7 +294,6 @@ clwrite(Req *r)
 		} else {
 			snprint(path, sizeof(path), "%s %s", t, s);
 			send(root->cmds, path);
-			// TODO: We will rcv a response
 			respond(r, nil);
 		}
 		return;
