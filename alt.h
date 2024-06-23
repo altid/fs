@@ -3,6 +3,7 @@ typedef struct Notify Notify;
 
 struct Buffer
 {
+	QLock;
 	char	*name;
 	char	title[1024];
 	char	status[1024];
@@ -10,8 +11,8 @@ struct Buffer
 	int	fd;
 	Channel	*cmds;
 	Notify	*notify;
-
 	Buffer	*next;
+	Rendez	rz;
 };
 
 struct Notify

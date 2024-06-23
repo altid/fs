@@ -49,6 +49,7 @@ bufferPush(Buffer *base, char *name)
 	b = emalloc(sizeof(*b));
 	b->name = estrdup(name);
 	b->notify = nil;
+	b->rz.l = b;
 	memset(b->title, 0, sizeof(b->title));
 	memset(b->status, 0, sizeof(b->status));
 	memset(b->aside, 0, sizeof(b->aside));
@@ -67,10 +68,14 @@ Buffer *
 bufferSearch(Buffer *base, char *name)
 {
 	Buffer *sp;
-
+	qlock(base);
 	for(sp = base; sp; sp = sp->next)
-		if(strcmp(sp->name, name) == 0)
+		if(strcmp(sp->name, name) == 0){
+			qunlock(base);
+			qlock(sp);
 			return sp;
+		}
+	qunlock(base);
 	return nil;
 }
 
@@ -87,7 +92,7 @@ bufferCreate(Channel *cmds)
 	b->cmds = cmds;
 	b->notify = nil;
 	b->next = nil;
+	b->rz.l = b;
 
 	return b;
 }
-

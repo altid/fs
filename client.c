@@ -73,6 +73,8 @@ newclient(char *aname)
 
 	cl->current = bufferSearch(root, aname);
 	cl->showmarkdown = 0;
+	if(cl->current)
+		qunlock(cl->current);
 
 	return cl;
 }
@@ -208,6 +210,7 @@ void
 clread(Req *r)
 {
 	Clfid *f;
+	Buffer *b;
 	Notify *np;
 	char buf[1024];
 	int n;
@@ -219,14 +222,27 @@ clread(Req *r)
 		respond(r, nil);
 		return;
 	case Qfeed:
-		// TODO: We could read a channel here and not respond until we have new data
-		// This currently does not block for input, but we want it to
+Read:
+		// Catch EOF
+		if(!f->cl->fd || !f->cl->current){
+			r->ofcall.data[0] = 0;
+			respond(r, nil);
+			return;
+		}
+		b = f->cl->current;
+		qlock(b);
 		n = pread(f->cl->fd, buf, sizeof(buf), r->ifcall.offset);
 		if(n){
-			r->ofcall.count = n - 1;
-			memmove(r->ofcall.data, buf, r->ofcall.count);
+			// cut off the EOF
+			r->ofcall.count = strlen(buf) - 1;
+			memmove(r->ofcall.data, buf, n);
+		} else if(f->cl->current) {
+			rsleep(&b->rz);
+			qunlock(b);
+			goto Read;
 		}
 		respond(r, nil);
+		qunlock(b);
 		return;
 	case Qtitle:
 		if(f->cl->current && f->cl->current->title){
@@ -289,6 +305,18 @@ clwrite(Req *r)
 			memset(path, sizeof(path), 0);
 			snprint(path, sizeof(path), "%s/%s/%s", logdir, root->name, s);
 			f->cl->fd = open(path, OREAD);
+			r->fid->aux = f;
+			respond(r, nil);
+			qunlock(f->cl->current);
+		} else if(strcmp(t, "markdown")==0){
+			if(f->cl->showmarkdown)
+				f->cl->showmarkdown = 0;
+			else
+				f->cl->showmarkdown = 1;
+			r->fid->aux = f;
+			respond(r, nil);
+		} else if(strcmp(t, "hidemarkdown")==0){
+			f->cl->showmarkdown = 0;
 			r->fid->aux = f;
 			respond(r, nil);
 		} else {

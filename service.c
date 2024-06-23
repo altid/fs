@@ -302,10 +302,8 @@ svcread(Req *r)
 		if(!f->svc->isInitialized) {
 			snprint(buf, sizeof(buf), "%d\n", SERVICEID(f->svc));
 			readstr(r, buf);
-		} else {
+		} else
 			recv(f->svc->cmds, buf);
-			print("%s\n", buf);
-		}
 		respond(r, nil);
 		return;
 
@@ -326,30 +324,39 @@ svcctl(Service *svc, char *s, char *data)
 		if(b = bufferSearch(svc->base, targ)) {
 			seek(b->fd, 0, 2);
 			write(b->fd, data, strlen(data));
+
+			if(rwakeupall(&b->rz)){
+				// We have readers, we can update tabs
+			}
+			qunlock(b);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "status")==0){
 		if(b = bufferSearch(svc->base, targ)) {
 			strcpy(b->status, data);
+			qunlock(b);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "title")==0){
 		if(b = bufferSearch(svc->base, targ)) {
 			strcpy(b->title, data);
+			qunlock(b);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "status")==0){
 		if(b = bufferSearch(svc->base, targ)) {
 			strcpy(b->status, data);
+			qunlock(b);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "aside")==0){
 		if(b = bufferSearch(svc->base, targ)) {
 			strcpy(b->aside, data);
+			qunlock(b);
 			return nil;
 		}
 		return "buffer not found";
