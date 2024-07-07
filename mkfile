@@ -13,6 +13,7 @@ OFILES=\
 	client.$O\
 	service.$O\
 	notification.$O\
+	tabs.$O\
 
 </sys/src/cmd/mkmany
 

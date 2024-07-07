@@ -49,6 +49,8 @@ bufferPush(Buffer *base, char *name)
 	b = emalloc(sizeof(*b));
 	b->name = estrdup(name);
 	b->notify = nil;
+	b->unread = 0;
+	b->tag = -1;
 	b->rz.l = b;
 	memset(b->title, 0, sizeof(b->title));
 	memset(b->status, 0, sizeof(b->status));
@@ -74,6 +76,16 @@ bufferSearch(Buffer *base, char *name)
 	return nil;
 }
 
+Buffer *
+bufferSearchTag(Buffer *base, ulong tag)
+{
+	Buffer *sp;
+	for(sp = base; sp; sp = sp->next)
+		if(sp->tag == tag)
+			return sp;
+	return nil;
+}
+
 Buffer*
 bufferCreate(Channel *cmds)
 {
@@ -85,6 +97,8 @@ bufferCreate(Channel *cmds)
 	memset(b->status, 0, sizeof(b->status));
 	memset(b->aside, 0, sizeof(b->aside));
 	b->cmds = cmds;
+	b->tag = -1;
+	b->unread = 0;
 	b->notify = nil;
 	b->next = nil;
 	b->rz.l = b;

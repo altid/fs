@@ -327,9 +327,8 @@ svcctl(Service *svc, char *s, char *data)
 			data[strlen(data)] = '\n';
 			pwrite(b->fd, data, strlen(data), d->length);
 			free(d);
-			if(rwakeupall(&b->rz)){
-				print("Unlocking all threads\n");
-			}
+			if(rwakeupall(&b->rz) == 0)
+				b->unread++;
 			qunlock(b);
 			return nil;
 		}

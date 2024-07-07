@@ -8,7 +8,9 @@ struct Buffer
 	char	title[1024];
 	char	status[1024];
 	char	aside[1024];
-	int	fd;
+	int	fd;	// feed
+	int	tag;	// feed
+	int	unread;
 	Channel	*cmds;
 	Notify	*notify;
 	Buffer	*next;
@@ -23,9 +25,13 @@ struct Notify
 
 Buffer *bufferCreate(Channel*);
 Buffer *bufferSearch(Buffer*, char*);
+Buffer *bufferSearchTag(Buffer*, ulong);
 char *bufferDrop(Buffer*, char*);
 char *bufferPush(Buffer*, char*);
 void bufferDestroy(Buffer*);
+
+int Tconv(Fmt*);
+int Nconv(Fmt*);
 
 void* emalloc(int);
 char* estrdup(char*);

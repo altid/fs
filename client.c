@@ -38,6 +38,7 @@ typedef struct Client Client;
 struct Clfid
 {
 	int	level;
+	int	tag;
 	Client	*cl;
 };
 
@@ -52,6 +53,7 @@ struct Client
 
 static Client client[256];
 static Buffer *root;
+int flushtag;
 static int nclient;
 static int time0;
 static Srv *fs;
@@ -215,6 +217,7 @@ clread(Req *r)
 	int n;
 
 	f = r->fid->aux;
+	n = 0;
 	switch(f->level){
 	case Qcroot:
 		dirread9p(r, rootgen, f->cl);
@@ -231,15 +234,20 @@ clread(Req *r)
 		srvrelease(fs);
 		qlock(b);
 Again:
-		n = pread(f->cl->fd, buf, sizeof(buf), r->ifcall.offset);
-		if(n){
-			// cut off the EOF
-			r->ofcall.count = n;
-			memmove(r->ofcall.data, buf, n);
-		} else{
-			rsleep(&b->rz);
-			goto Again;
-		}
+		// Check if we have a tag here, abort early if so.
+		if(b->tag != flushtag){	
+			n = pread(f->cl->fd, buf, sizeof(buf), r->ifcall.offset);
+			if(n){
+				// cut off the EOF
+				r->ofcall.count = n;
+				memmove(r->ofcall.data, buf, n);
+			} else {
+				b->unread = 0;
+				rsleep(&b->rz);
+				goto Again;
+			}
+		} else
+			flushtag = -1;
 		qunlock(b);
 		memset(buf, 0, sizeof(buf));
 		srvacquire(fs);
@@ -254,29 +262,38 @@ String:
 			respond(r, nil);
 			return;	
 		}
+		break;
 	case Qstatus:
 		if(f->cl->current && f->cl->current->status){
 			memset(buf, 0, sizeof(buf));
 			snprint(buf, sizeof(buf), "%s", f->cl->current->status);
 			goto String;
 		}
+		break;
 	case Qaside:
 		if(f->cl->current && f->cl->current->aside){
 			memset(buf, 0, sizeof(buf));
 			snprint(buf, sizeof(buf), "%s", f->cl->current->aside);
 			goto String;
 		}
+		break;
 	case Qnotify:
 		if(f->cl->current && f->cl->current->notify){
 			memset(buf, 0, sizeof(buf));
-			for(np = f->cl->current->notify; np->next; np = np->next)
-				// TODO: Move to fmt specifier for these
-				snprint(buf, sizeof(buf), "%s\n", np->data);
+			for(np = f->cl->current->notify; np; np = np->next)
+				n = snprint(buf + n, sizeof(buf), "%!\n", np);
 			goto String;
 		}
-	//case Qtabs:
-	// Iterate through base and show up all 'o them
-		
+		break;
+	case Qtabs:
+		if(f->cl->current){
+			memset(buf, 0, sizeof(buf));
+			for(b = root->next; b; b = b->next){
+				n = snprint(buf + n, sizeof(buf), "%t\n", b);
+			}
+			goto String;
+		}
+		break;
 	}
 	if(!f->cl->current)
 		respond(r, "no buffer selected");
@@ -303,6 +320,9 @@ clwrite(Req *r)
 			if(f->cl->fd)
 				close(f->cl->fd);
 			f->cl->current = bufferSearch(root, s);
+			if(!f->cl->current)
+				respond(r, "No buffer for selected");
+			f->cl->current->tag = r->tag;
 			memset(path, sizeof(path), 0);
 			snprint(path, sizeof(path), "%s/%s/%s", logdir, root->name, s);
 			f->cl->fd = open(path, OREAD);
@@ -343,6 +363,13 @@ clwrite(Req *r)
 void
 clflush(Req *r)
 {
+	Buffer *b;
+	flushtag = r->tag;
+	if(b = bufferSearchTag(root, flushtag)){
+		qlock(b);
+		rwakeup(&b->rz);
+		qunlock(b);
+	}
 	respond(r, nil);
 }
 
@@ -365,6 +392,7 @@ clstart(Srv *s)
 	root = emalloc(sizeof(*root));
 	USED(root);
 	root = (Buffer*)s->aux;
+	flushtag = -1;
 	fs = s;
 	time0 = time(0);
 }

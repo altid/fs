@@ -16,10 +16,3 @@ exec /bin/exportfs -r /mnt/irc
 ## Notifications:
 
 - Create and update them, integrate with tabs
-- Install fmt for printing
-
-## Tabs:
-
-- list available buffers with unread counts, add notify `!` when applicable
-- Install fmt for printing
-- Clearing unreads on the rwakeupall

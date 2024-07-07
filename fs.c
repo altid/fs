@@ -50,8 +50,8 @@ usage(void)
 void
 threadmain(int argc, char *argv[])
 {
-	// We could use quotefmtinstall here
-	// add in tabs at very least
+	fmtinstall('t', Tconv);
+	fmtinstall('!', Nconv);
 	user = getuser();
 	mtpt = "/mnt/alt";
 	logdir = "/tmp/alt";
