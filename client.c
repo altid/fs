@@ -54,6 +54,7 @@ static Client client[256];
 static Buffer *root;
 static int nclient;
 static int time0;
+static Srv *fs;
 
 static Client*
 newclient(char *aname)
@@ -73,8 +74,6 @@ newclient(char *aname)
 
 	cl->current = bufferSearch(root, aname);
 	cl->showmarkdown = 0;
-	if(cl->current)
-		qunlock(cl->current);
 
 	return cl;
 }
@@ -222,7 +221,6 @@ clread(Req *r)
 		respond(r, nil);
 		return;
 	case Qfeed:
-Read:
 		// Catch EOF
 		if(!f->cl->fd || !f->cl->current){
 			r->ofcall.data[0] = 0;
@@ -230,19 +228,22 @@ Read:
 			return;
 		}
 		b = f->cl->current;
+		srvrelease(fs);
 		qlock(b);
+Again:
 		n = pread(f->cl->fd, buf, sizeof(buf), r->ifcall.offset);
 		if(n){
 			// cut off the EOF
-			r->ofcall.count = strlen(buf) - 1;
+			r->ofcall.count = n;
 			memmove(r->ofcall.data, buf, n);
-		} else if(f->cl->current) {
+		} else{
 			rsleep(&b->rz);
-			qunlock(b);
-			goto Read;
+			goto Again;
 		}
-		respond(r, nil);
 		qunlock(b);
+		memset(buf, 0, sizeof(buf));
+		srvacquire(fs);
+		respond(r, nil);
 		return;
 	case Qtitle:
 		if(f->cl->current && f->cl->current->title){
@@ -307,7 +308,6 @@ clwrite(Req *r)
 			f->cl->fd = open(path, OREAD);
 			r->fid->aux = f;
 			respond(r, nil);
-			qunlock(f->cl->current);
 		} else if(strcmp(t, "markdown")==0){
 			if(f->cl->showmarkdown)
 				f->cl->showmarkdown = 0;
@@ -365,6 +365,7 @@ clstart(Srv *s)
 	root = emalloc(sizeof(*root));
 	USED(root);
 	root = (Buffer*)s->aux;
+	fs = s;
 	time0 = time(0);
 }
 

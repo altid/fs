@@ -68,14 +68,9 @@ Buffer *
 bufferSearch(Buffer *base, char *name)
 {
 	Buffer *sp;
-	qlock(base);
 	for(sp = base; sp; sp = sp->next)
-		if(strcmp(sp->name, name) == 0){
-			qunlock(base);
-			qlock(sp);
+		if(strcmp(sp->name, name) == 0)
 			return sp;
-		}
-	qunlock(base);
 	return nil;
 }
 

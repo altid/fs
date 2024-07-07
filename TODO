@@ -12,7 +12,6 @@ exec /bin/exportfs -r /mnt/irc
 ## Client
 
 - Add in command to toggle markup
-- Blocking reads for feed, potentially a cb to clear out unread counts
 
 ## Notifications:
 
@@ -23,3 +22,4 @@ exec /bin/exportfs -r /mnt/irc
 
 - list available buffers with unread counts, add notify `!` when applicable
 - Install fmt for printing
+- Clearing unreads on the rwakeupall

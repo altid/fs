@@ -24,7 +24,7 @@ static char *svctab[] = {
 	nil,
 };
 
-Srv clfs =
+Srv clfs = 
 {
 	.start=clstart,
 	.attach=clattach,
@@ -45,7 +45,6 @@ typedef struct Service Service;
 struct Svcfid
 {	int	level;
 	Service 	*svc;
-	// Who knows
 };
 
 struct Service
@@ -316,17 +315,20 @@ svcctl(Service *svc, char *s, char *data)
 {
 	// Probably notifications as well?
 	Buffer *b;
+	Dir *d;
 	char *cmd, *targ;
 
 	cmd = strtok(s, " ");
 	targ = strtok(nil, "\n");
 	if(strcmp(cmd, "feed")==0) {
 		if(b = bufferSearch(svc->base, targ)) {
-			seek(b->fd, 0, 2);
-			write(b->fd, data, strlen(data));
-
+			qlock(b);
+			d = dirfstat(b->fd);
+			data[strlen(data)] = '\n';
+			pwrite(b->fd, data, strlen(data), d->length);
+			free(d);
 			if(rwakeupall(&b->rz)){
-				// We have readers, we can update tabs
+				print("Unlocking all threads\n");
 			}
 			qunlock(b);
 			return nil;
@@ -335,28 +337,24 @@ svcctl(Service *svc, char *s, char *data)
 	} else if(strcmp(cmd, "status")==0){
 		if(b = bufferSearch(svc->base, targ)) {
 			strcpy(b->status, data);
-			qunlock(b);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "title")==0){
 		if(b = bufferSearch(svc->base, targ)) {
 			strcpy(b->title, data);
-			qunlock(b);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "status")==0){
 		if(b = bufferSearch(svc->base, targ)) {
 			strcpy(b->status, data);
-			qunlock(b);
 			return nil;
 		}
 		return "buffer not found";
 	} else if(strcmp(cmd, "aside")==0){
 		if(b = bufferSearch(svc->base, targ)) {
 			strcpy(b->aside, data);
-			qunlock(b);
 			return nil;
 		}
 		return "buffer not found";
@@ -397,7 +395,6 @@ svcwrite(Req *r)
 			t = svcctl(f->svc, s, t);
 			respond(r, t);
 		} else {
-			// Set a short limit on this probably
 			f->svc->name = estrdup(s);
 			f->svc->base->name = estrdup(s);
 			memset(path, 0, sizeof(path));
@@ -407,6 +404,7 @@ svcwrite(Req *r)
 			f->svc->childpid = threadpostsrv(&clfs, s);
 			if(f->svc->childpid >= 0){
 				f->svc->isInitialized++;
+				r->fid->aux = f;
 				respond(r, nil);
 			} else 
 				respond(r, "Unable to post to srv");
