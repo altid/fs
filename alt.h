@@ -3,7 +3,7 @@ typedef struct Notify Notify;
 
 struct Buffer
 {
-	QLock;
+	QLock       l;
 	char	*name;
 	char	title[1024];
 	char	status[1024];

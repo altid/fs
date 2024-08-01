@@ -15,4 +15,4 @@ exec /bin/exportfs -r /mnt/irc
 
 ## Notifications:
 
-- Create and update them, integrate with tabs
+- Create and update, clear when read

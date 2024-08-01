@@ -53,7 +53,7 @@ struct Client
 
 static Client client[256];
 static Buffer *root;
-int flushtag;
+static int flushtag;
 static int nclient;
 static int time0;
 static Srv *fs;
@@ -128,7 +128,7 @@ clattach(Req *r)
 {
 	Clfid *f;
 
-	f = emalloc(sizeof(*f));
+	f = mallocz(sizeof(*f), 1);
 	f->cl = newclient(r->ifcall.aname);
 	f->level = Qcroot;
 	clmkqid(&r->fid->qid, f->level, nil);
@@ -182,7 +182,7 @@ clclone(Fid *oldfid, Fid *newfid)
 	o = oldfid->aux;
 	if(o == nil)
 		return "bad fid";
-	f = emalloc(sizeof(*f));
+	f = mallocz(sizeof(*f), 1);
 	memmove(f, o, sizeof(*f));
 	if(f->cl)
 		incref(f->cl);
@@ -230,9 +230,8 @@ clread(Req *r)
 			respond(r, nil);
 			return;
 		}
-		b = f->cl->current;
 		srvrelease(fs);
-		qlock(b);
+		b = f->cl->current;
 Again:
 		// Check if we have a tag here, abort early if so.
 		if(b->tag != flushtag){	
@@ -242,21 +241,25 @@ Again:
 				r->ofcall.count = n;
 				memmove(r->ofcall.data, buf, n);
 			} else {
+				qlock(&b->l);
 				b->unread = 0;
 				rsleep(&b->rz);
+				qunlock(&b->l);
 				goto Again;
 			}
 		} else
 			flushtag = -1;
-		qunlock(b);
 		memset(buf, 0, sizeof(buf));
 		srvacquire(fs);
 		respond(r, nil);
 		return;
 	case Qtitle:
 		if(f->cl->current && f->cl->current->title){
+			b = f->cl->current;
 			memset(buf, 0, sizeof(buf));
-			snprint(buf, sizeof(buf), "%s", f->cl->current->title);
+			qlock(&b->l);
+			snprint(buf, sizeof(buf), "%s", b->title);
+			qunlock(&b->l);
 String:
 			readstr(r, buf);
 			respond(r, nil);
@@ -265,35 +268,43 @@ String:
 		break;
 	case Qstatus:
 		if(f->cl->current && f->cl->current->status){
+			b = f->cl->current;
 			memset(buf, 0, sizeof(buf));
-			snprint(buf, sizeof(buf), "%s", f->cl->current->status);
+			qlock(&b->l);
+			snprint(buf, sizeof(buf), "%s",b->status);
+			qunlock(&b->l);
 			goto String;
 		}
 		break;
 	case Qaside:
 		if(f->cl->current && f->cl->current->aside){
+			b = f->cl->current;
 			memset(buf, 0, sizeof(buf));
-			snprint(buf, sizeof(buf), "%s", f->cl->current->aside);
+			qlock(&b->l);
+			snprint(buf, sizeof(buf), "%s", b->aside);
+			qunlock(&b->l);
 			goto String;
 		}
 		break;
 	case Qnotify:
 		if(f->cl->current && f->cl->current->notify){
+			b = f->cl->current;
 			memset(buf, 0, sizeof(buf));
-			for(np = f->cl->current->notify; np; np = np->next)
-				n = snprint(buf + n, sizeof(buf), "%!\n", np);
+			qlock(&b->l);
+			for(np = b->notify; np; np = np->next)
+				n = snprint(buf + n, sizeof(buf), "!%s\n", np->data);
+			qunlock(&b->l);
 			goto String;
 		}
 		break;
 	case Qtabs:
-		if(f->cl->current){
-			memset(buf, 0, sizeof(buf));
-			for(b = root->next; b; b = b->next){
-				n = snprint(buf + n, sizeof(buf), "%t\n", b);
-			}
-			goto String;
+		qlock(&root->l);
+		memset(buf, 0, sizeof(buf));
+		for(b = root->next; b; b = b->next){
+			n += snprint(buf + n, sizeof(buf) - n, "%t\n", b);
 		}
-		break;
+		qunlock(&root->l);
+		goto String;
 	}
 	if(!f->cl->current)
 		respond(r, "no buffer selected");
@@ -304,6 +315,7 @@ String:
 void
 clwrite(Req *r)
 {
+	Buffer *b;
 	Clfid *f;
 	char *s, *t, path[1024];
 	int n;
@@ -319,10 +331,15 @@ clwrite(Req *r)
 		if(strcmp(t, "buffer") == 0){
 			if(f->cl->fd)
 				close(f->cl->fd);
-			f->cl->current = bufferSearch(root, s);
-			if(!f->cl->current)
-				respond(r, "No buffer for selected");
-			f->cl->current->tag = r->tag;
+			b = bufferSearch(root, s);
+			if(!b){
+				respond(r, "No buffers available");
+				return;
+			}
+			qlock(&b->l);
+			f->cl->current = b;
+			b->tag = r->tag;
+			qunlock(&b->l);
 			memset(path, sizeof(path), 0);
 			snprint(path, sizeof(path), "%s/%s/%s", logdir, root->name, s);
 			f->cl->fd = open(path, OREAD);
@@ -341,7 +358,9 @@ clwrite(Req *r)
 			respond(r, nil);
 		} else {
 			snprint(path, sizeof(path), "%s %s", t, s);
+			srvrelease(fs);
 			send(root->cmds, path);
+			srvacquire(fs);
 			respond(r, nil);
 		}
 		return;
@@ -366,9 +385,9 @@ clflush(Req *r)
 	Buffer *b;
 	flushtag = r->tag;
 	if(b = bufferSearchTag(root, flushtag)){
-		qlock(b);
+		qlock(&b->l);
 		rwakeup(&b->rz);
-		qunlock(b);
+		qunlock(&b->l);
 	}
 	respond(r, nil);
 }
@@ -379,6 +398,7 @@ cldestroyfid(Fid *fid)
 	Clfid *f;
 
 	if(f = fid->aux){
+		// TODO: Uncomment once we use this in aux/listen
 		//fid->aux = nil;
 		//if(f->cl)
 		//	freeclient(f->cl);
@@ -400,6 +420,5 @@ clstart(Srv *s)
 void
 clend(Srv*)
 {
-	postnote(PNGROUP, getpid(), "shutdown");
 	exits(nil);
 }

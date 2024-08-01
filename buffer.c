@@ -18,6 +18,7 @@ char *
 bufferDrop(Buffer *base, char *name)
 {
 	Buffer *mp, *bp;
+	qlock(&base->l);
 	for(bp = base; bp->next; bp = bp->next){
 		mp = bp->next;
 		if(strcmp(bp->next->name, name) == 0){
@@ -29,7 +30,7 @@ bufferDrop(Buffer *base, char *name)
 				bufferFree(mp);
 		}
 	}
-				
+	qunlock(&base->l);			
 	return nil;
 }
 
@@ -39,19 +40,22 @@ bufferPush(Buffer *base, char *name)
 	Buffer *b, *ep;
 	char p[1024];
 
+	qlock(&base->l);
 	for(ep = base; ep->next; ep = ep->next){
-		if(ep && strcmp(ep->name, name) == 0)
+		if(ep && strcmp(ep->name, name) == 0){
+			qunlock(&base->l);
 			return "buffer exists";
+		}
 		if(ep->next == nil)
 			break;
 	}
 	
-	b = emalloc(sizeof(*b));
+	b = mallocz(sizeof(*b), 1);
 	b->name = estrdup(name);
 	b->notify = nil;
 	b->unread = 0;
 	b->tag = -1;
-	b->rz.l = b;
+	b->rz.l = &b->l;
 	memset(b->title, 0, sizeof(b->title));
 	memset(b->status, 0, sizeof(b->status));
 	memset(b->aside, 0, sizeof(b->aside));
@@ -62,7 +66,7 @@ bufferPush(Buffer *base, char *name)
 		b->fd = create(p, OWRITE, 0644);
 	seek(b->fd, 0, 2);
 	ep->next = b;
-
+	qunlock(&base->l);
 	return nil;
 }
 
@@ -70,9 +74,13 @@ Buffer *
 bufferSearch(Buffer *base, char *name)
 {
 	Buffer *sp;
+	qlock(&base->l);
 	for(sp = base; sp; sp = sp->next)
-		if(strcmp(sp->name, name) == 0)
+		if(strcmp(sp->name, name) == 0){
+			qunlock(&base->l);
 			return sp;
+		}
+	qunlock(&base->l);
 	return nil;
 }
 
@@ -80,9 +88,13 @@ Buffer *
 bufferSearchTag(Buffer *base, ulong tag)
 {
 	Buffer *sp;
+	qlock(&base->l);
 	for(sp = base; sp; sp = sp->next)
-		if(sp->tag == tag)
+		if(sp->tag == tag){
+			qunlock(&base->l);
 			return sp;
+		}
+	qunlock(&base->l);
 	return nil;
 }
 
@@ -91,7 +103,7 @@ bufferCreate(Channel *cmds)
 {
 	Buffer *b;
 
-	b = emalloc(sizeof(*b));
+	b = mallocz(sizeof(*b), 1);
 	b->name = nil;
 	memset(b->title, 0, sizeof(b->title));
 	memset(b->status, 0, sizeof(b->status));
@@ -101,7 +113,7 @@ bufferCreate(Channel *cmds)
 	b->unread = 0;
 	b->notify = nil;
 	b->next = nil;
-	b->rz.l = b;
+	b->rz.l = &b->l;
 
 	return b;
 }

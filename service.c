@@ -58,6 +58,7 @@ struct Service
 	int	childpid;
 };
 
+static Srv *fs;
 Service service[64];
 int nservice;
 
@@ -75,8 +76,8 @@ newservice(void)
 	if(i == nservice)
 		nservice++;
 	svc = &service[i];
-
 	svc->ref++;
+
 	// NOTE: If you're sending more commands than this before they are processed, up this number
 	// But also it might be time to question your design, because commands really should not be taking long
 	svc->cmds = chancreate(1024, 16);
@@ -155,7 +156,7 @@ svcattach(Req *r)
 		respond(r, "invalid attach specifier");
 		return;
 	}
-	f = emalloc(sizeof(*f));
+	f = mallocz(sizeof(*f), 1);
 	f->level = Qsroot;
 	svcmkqid(&r->fid->qid, f->level, wfaux(f));
 	r->ofcall.qid = r->fid->qid;
@@ -224,7 +225,7 @@ svcclone(Fid *oldfid, Fid *newfid)
 	o = oldfid->aux;
 	if(o == nil)
 		return "bad fid";
-	f = emalloc(sizeof(*f));
+	f = mallocz(sizeof(*f), 1);
 	memmove(f, o, sizeof(*f));
 	if(f->svc)
 		incref(f->svc);
@@ -299,11 +300,20 @@ svcread(Req *r)
 		memset(buf, 0, sizeof(buf));
 		// NOTE: This stays here so we always get a good ID back on the client from the initial read
 		if(!f->svc->isInitialized) {
+			while(nbrecv(f->svc->cmds, nil) == 1)
+				;
 			snprint(buf, sizeof(buf), "%d\n", SERVICEID(f->svc));
 			readstr(r, buf);
-		} else
+			respond(r, nil);
+		} else {
+			srvrelease(fs);
 			recv(f->svc->cmds, buf);
-		respond(r, nil);
+			if(strcmp(buf, "flush") == 0)
+				readstr(r, buf);
+			respond(r, nil);
+			srvacquire(fs);
+		}
+
 		return;
 
 	}
@@ -322,14 +332,14 @@ svcctl(Service *svc, char *s, char *data)
 	targ = strtok(nil, "\n");
 	if(strcmp(cmd, "feed")==0) {
 		if(b = bufferSearch(svc->base, targ)) {
-			qlock(b);
+			qlock(&b->l);
 			d = dirfstat(b->fd);
 			data[strlen(data)] = '\n';
 			pwrite(b->fd, data, strlen(data), d->length);
 			free(d);
 			if(rwakeupall(&b->rz) == 0)
 				b->unread++;
-			qunlock(b);
+			qunlock(&b->l);
 			return nil;
 		}
 		return "buffer not found";
@@ -364,6 +374,8 @@ svcctl(Service *svc, char *s, char *data)
 		return bufferPush(svc->base, targ);
 	else if(strcmp(cmd, "close")==0)
 		return bufferDrop(svc->base, targ);
+	else if(strcmp(cmd, "error")==0)
+		return targ;
 	else 
 		return "command not supported";
 }
@@ -380,7 +392,7 @@ svcwrite(Req *r)
 
 	if(f->level == Qctl){
 		n = r->ofcall.count = r->ifcall.count;
-		s = emalloc(n+1);
+		s = mallocz(n+1, 1);
 		memmove(s, r->ifcall.data, n);
 		while(n > 0 && strchr("\r\n", s[n-1]))
 			n--;
@@ -417,6 +429,14 @@ svcwrite(Req *r)
 void
 svcflush(Req *r)
 {
+	Buffer *b;
+	int i;
+	for(i = 0; i < nservice; i++)
+		if(service[i].ref > 0)
+			if((b = bufferSearchTag(service[i].base, r->tag))){
+				send(service[i].cmds, "flush");
+				break;
+			}
 	respond(r, nil);
 }
 
@@ -437,8 +457,9 @@ svcdestroyfid(Fid *fid)
 }
 
 void
-svcstart(Srv*)
+svcstart(Srv* s)
 {
+	fs = s;
 	if(mtpt != nil)
 		unmount(nil, mtpt);
 }
@@ -446,6 +467,15 @@ svcstart(Srv*)
 void
 svcend(Srv*)
 {
+	int i;
+
+	if(mtpt != nil)
+		unmount(nil, mtpt);
+	for(i = 0; i < nservice; i++)
+		if(service[i].ref){
+			print("Killing %d\n", service[i].childpid);
+			postnote(PNGROUP, service[i].childpid, "shutdown");
+		}
 	postnote(PNGROUP, getpid(), "shutdown");
 	threadexitsall(nil);
 }

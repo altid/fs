@@ -77,5 +77,5 @@ threadmain(int argc, char *argv[])
 
 	create(logdir, OREAD, DMDIR | 0755);
 	threadpostmountsrv(&svcfs, nil, mtpt, MCREATE);
-	exits(nil); 
+	exits(nil);
 }
