@@ -80,7 +80,7 @@ newservice(void)
 
 	// NOTE: If you're sending more commands than this before they are processed, up this number
 	// But also it might be time to question your design, because commands really should not be taking long
-	svc->cmds = chancreate(1024, 16);
+	svc->cmds = chancreate(1024, 32);
 	svc->base = bufferCreate(svc->cmds);
 	svc->isInitialized = 0;
 	
@@ -330,11 +330,11 @@ svcctl(Service *svc, char *s, char *data)
 
 	cmd = strtok(s, " ");
 	targ = strtok(nil, "\n");
-	if(strcmp(cmd, "feed")==0) {
+	if(strcmp(cmd, "feed")==0) { 
 		if(b = bufferSearch(svc->base, targ)) {
+print("%s %s %s\n", cmd, targ, data);
 			qlock(&b->l);
 			d = dirfstat(b->fd);
-			data[strlen(data)] = '\n';
 			pwrite(b->fd, data, strlen(data), d->length);
 			free(d);
 			if(rwakeupall(&b->rz) == 0)
@@ -399,10 +399,11 @@ svcwrite(Req *r)
 		s[n] = 0;
 		if(f->svc->isInitialized){
 			t = s;
+print("s in: %s\n", s);
 			while(*t && strchr("\t\r\n", *t)==0)
 				t++;
-			while(*t && strchr("\t\r\n", *t))
-				*t++ = 0;
+			//while(*t && strchr("\t\r\n", *t))
+			//	*t++ = 0;
 			t = svcctl(f->svc, s, t);
 			respond(r, t);
 		} else {
@@ -447,7 +448,7 @@ svcdestroyfid(Fid *fid)
 
 	if(f = fid->aux){
 		if(f->svc && f->svc->childpid)
-			postnote(PNGROUP, f->svc->childpid, "shutdown");
+			postnote(PNPROC, f->svc->childpid, "done");
 		// TODO: Uncomment this after we are good to go, this is our keepalive roughly
 		//fid->aux = nil;
 		//if(f->svc)
@@ -473,9 +474,8 @@ svcend(Srv*)
 		unmount(nil, mtpt);
 	for(i = 0; i < nservice; i++)
 		if(service[i].ref){
-			print("Killing %d\n", service[i].childpid);
-			postnote(PNGROUP, service[i].childpid, "shutdown");
+			postnote(PNPROC, service[i].childpid, "done");
 		}
-	postnote(PNGROUP, getpid(), "shutdown");
+	postnote(PNPROC, getpid(), "done");
 	threadexitsall(nil);
 }

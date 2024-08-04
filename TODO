@@ -12,6 +12,7 @@ exec /bin/exportfs -r /mnt/irc
 ## Client
 
 - Add in command to toggle markup
+- Reads on feed do not close cleanly when buffers change
 
 ## Notifications:
 

@@ -234,9 +234,9 @@ clread(Req *r)
 		b = f->cl->current;
 Again:
 		// Check if we have a tag here, abort early if so.
-		if(b->tag != flushtag){	
+		if(b->tag != flushtag){
 			n = pread(f->cl->fd, buf, sizeof(buf), r->ifcall.offset);
-			if(n){
+			if(n > 0){
 				// cut off the EOF
 				r->ofcall.count = n;
 				memmove(r->ofcall.data, buf, n);
@@ -329,14 +329,17 @@ clwrite(Req *r)
 		t = strtok(s, " ");
 		s = strtok(nil, "\n");
 		if(strcmp(t, "buffer") == 0){
-			if(f->cl->fd)
-				close(f->cl->fd);
 			b = bufferSearch(root, s);
 			if(!b){
 				respond(r, "No buffers available");
 				return;
 			}
 			qlock(&b->l);
+			if(f->cl->fd){
+				b->tag = flushtag = 1;
+				rwakeupall(&b->rz);
+				close(f->cl->fd);
+			}
 			f->cl->current = b;
 			b->tag = r->tag;
 			qunlock(&b->l);
@@ -409,6 +412,7 @@ cldestroyfid(Fid *fid)
 void
 clstart(Srv *s)
 {
+	// TODO: Set up note handler
 	root = emalloc(sizeof(*root));
 	USED(root);
 	root = (Buffer*)s->aux;
