@@ -1,13 +1,34 @@
 typedef struct Buffer Buffer;
 typedef struct Notify Notify;
+typedef struct Cmd Cmd;
+
+enum
+{
+	CloneCmd,
+	CreateCmd,
+	DeleteCmd,
+	RemoveCmd,
+	NotifyCmd,
+	ErrorCmd,
+	StatusCmd,
+	SideCmd,
+	NavCmd,
+	TitleCmd,
+	ImageCmd,
+	FeedCmd,
+	QuitCmd,
+	ServiceCmd,
+
+	MaxBuflen = 256,
+};
 
 struct Buffer
 {
 	QLock       l;
-	char	*name;
+	char	name[MaxBuflen];
 	char	title[1024];
 	char	status[1024];
-	char	aside[1024];
+	char	*aside;
 	int	fd;	// feed
 	int	tag;	// feed
 	int	unread;
@@ -21,6 +42,15 @@ struct Notify
 {
 	char	*data;
 	Notify	*next;
+};
+
+struct Cmd
+{
+	// Potentially big
+	int	type;
+	char	buffer[MaxBuflen];
+	char	data[2048];
+	char	svccmd[256];
 };
 
 Buffer *bufferCreate(Channel*);
@@ -42,6 +72,7 @@ char *user;
 char *logdir;
 int debug;
 
+Cmd* convS2C(char*);
 void clattach(Req*);
 void clstat(Req*);
 char *clwalk1(Fid*, char*, Qid*);

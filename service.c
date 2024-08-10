@@ -300,128 +300,105 @@ svcread(Req *r)
 		memset(buf, 0, sizeof(buf));
 		// NOTE: This stays here so we always get a good ID back on the client from the initial read
 		if(!f->svc->isInitialized) {
-			while(nbrecv(f->svc->cmds, nil) == 1)
-				;
 			snprint(buf, sizeof(buf), "%d\n", SERVICEID(f->svc));
 			readstr(r, buf);
 			respond(r, nil);
 		} else {
+			// Wait for any data/command from the client
 			srvrelease(fs);
 			recv(f->svc->cmds, buf);
-			if(strcmp(buf, "flush") == 0)
+			srvacquire(fs);
+			if(strcmp(buf, "flush") != 0)
 				readstr(r, buf);
 			respond(r, nil);
-			srvacquire(fs);
 		}
-
 		return;
 
 	}
 	respond(r, "not implemented");
 }
 
-static char*
-svcctl(Service *svc, char *s, char *data)
-{
-	// Probably notifications as well?
-	Buffer *b;
-	Dir *d;
-	char *cmd, *targ;
-
-	cmd = strtok(s, " ");
-	targ = strtok(nil, "\n");
-	if(strcmp(cmd, "feed")==0) { 
-		if(b = bufferSearch(svc->base, targ)) {
-print("%s %s %s\n", cmd, targ, data);
-			qlock(&b->l);
-			d = dirfstat(b->fd);
-			pwrite(b->fd, data, strlen(data), d->length);
-			free(d);
-			if(rwakeupall(&b->rz) == 0)
-				b->unread++;
-			qunlock(&b->l);
-			return nil;
-		}
-		return "buffer not found";
-	} else if(strcmp(cmd, "status")==0){
-		if(b = bufferSearch(svc->base, targ)) {
-			strcpy(b->status, data);
-			return nil;
-		}
-		return "buffer not found";
-	} else if(strcmp(cmd, "title")==0){
-		if(b = bufferSearch(svc->base, targ)) {
-			strcpy(b->title, data);
-			return nil;
-		}
-		return "buffer not found";
-	} else if(strcmp(cmd, "status")==0){
-		if(b = bufferSearch(svc->base, targ)) {
-			strcpy(b->status, data);
-			return nil;
-		}
-		return "buffer not found";
-	} else if(strcmp(cmd, "aside")==0){
-		if(b = bufferSearch(svc->base, targ)) {
-			strcpy(b->aside, data);
-			return nil;
-		}
-		return "buffer not found";
-	} else if(strcmp(cmd, "notify")==0){
-		// Create notification here
-		return "not yet implemented";
-	} else if(strcmp(cmd, "create")==0)
-		return bufferPush(svc->base, targ);
-	else if(strcmp(cmd, "close")==0)
-		return bufferDrop(svc->base, targ);
-	else if(strcmp(cmd, "error")==0)
-		return targ;
-	else 
-		return "command not supported";
-}
 
 void
 svcwrite(Req *r)
 {
 	int n;
-	char *s, *t;
 	Svcfid *f;
+	Cmd *c;
+	Buffer *b;
+	Dir *d;
+	char *p;
 	char path[1024];
 
 	f = r->fid->aux;
 
 	if(f->level == Qctl){
 		n = r->ofcall.count = r->ifcall.count;
-		s = mallocz(n+1, 1);
-		memmove(s, r->ifcall.data, n);
-		while(n > 0 && strchr("\r\n", s[n-1]))
-			n--;
-		s[n] = 0;
-		if(f->svc->isInitialized){
-			t = s;
-print("s in: %s\n", s);
-			while(*t && strchr("\t\r\n", *t)==0)
-				t++;
-			//while(*t && strchr("\t\r\n", *t))
-			//	*t++ = 0;
-			t = svcctl(f->svc, s, t);
-			respond(r, t);
-		} else {
-			f->svc->name = estrdup(s);
-			f->svc->base->name = estrdup(s);
-			memset(path, 0, sizeof(path));
-			snprint(path, sizeof(path), "%s/%s", logdir, s);
-			close(create(path, OREAD, DMDIR | 0755));
-			clfs.aux = f->svc->base;
-			f->svc->childpid = threadpostsrv(&clfs, s);
-			if(f->svc->childpid >= 0){
-				f->svc->isInitialized++;
-				r->fid->aux = f;
-				respond(r, nil);
-			} else 
-				respond(r, "Unable to post to srv");
+		p = mallocz(n+1, 1);
+		memmove(p, r->ifcall.data, n);
+		c = convS2C(p);
+		if(c == nil){
+			respond(r, "unable to parse command");
+			return;
 		}
-		free(s);
+		switch(c->type){
+		case CloneCmd:
+			if(!f->svc->isInitialized){
+				f->svc->name = estrdup(c->data);
+				strcpy(f->svc->base->name, c->data);
+				memset(path, 0, sizeof(path));
+				snprint(path, sizeof(path), "%s/%s", logdir, c->data);
+				close(create(path, OREAD, DMDIR | 0755));
+				clfs.aux = f->svc->base;
+				f->svc->childpid = threadpostsrv(&clfs, strdup(c->data));
+				if(f->svc->childpid >= 0){
+					f->svc->isInitialized++;
+					r->fid->aux = f;
+					respond(r, nil);
+				} else 
+					respond(r, "Unable to post to srv");
+				return;	
+			}
+			// Ignore, something weird going on.
+			respond(r, nil);
+			return;
+		case CreateCmd:
+			respond(r, bufferPush(f->svc->base, c->buffer));
+			return;
+		case NotifyCmd:
+			respond(r, "not implemented yet");
+			return;
+		case DeleteCmd:
+			respond(r, bufferDrop(f->svc->base, c->buffer));
+			return;
+		case ErrorCmd:
+			respond(r, "not implemented yet");
+			return;
+		}
+		if(b = bufferSearch(f->svc->base, c->buffer)) {
+			qlock(&b->l);
+			switch(c->type){
+			case FeedCmd:
+				d = dirfstat(b->fd);
+				pwrite(b->fd, c->data, strlen(c->data), d->length);
+				free(d);
+				if(rwakeupall(&b->rz) == 0)
+					b->unread++;
+				break;
+			case StatusCmd:
+				strcpy(b->status, c->data);
+				break;
+			case TitleCmd:
+				strcpy(b->title, c->data);
+				break;
+			case SideCmd:
+				strcpy(b->aside, c->data);
+				break;
+			}
+			qunlock(&b->l);
+			respond(r, nil);
+		} else
+			respond(r, "buffer not found");
 		return;
 	}
 	respond(r, "not implemented");
@@ -430,12 +407,11 @@ print("s in: %s\n", s);
 void
 svcflush(Req *r)
 {
-	Buffer *b;
 	int i;
 	for(i = 0; i < nservice; i++)
 		if(service[i].ref > 0)
-			if((b = bufferSearchTag(service[i].base, r->tag))){
-				send(service[i].cmds, "flush");
+			if((bufferSearchTag(service[i].base, r->tag))){
+				nbsend(service[i].cmds, "flush");
 				break;
 			}
 	respond(r, nil);

@@ -51,14 +51,11 @@ bufferPush(Buffer *base, char *name)
 	}
 	
 	b = mallocz(sizeof(*b), 1);
-	b->name = estrdup(name);
+	strcpy(b->name, name);
 	b->notify = nil;
 	b->unread = 0;
 	b->tag = -1;
 	b->rz.l = &b->l;
-	memset(b->title, 0, sizeof(b->title));
-	memset(b->status, 0, sizeof(b->status));
-	memset(b->aside, 0, sizeof(b->aside));
 	snprint(p, sizeof(p), "%s/%s/%s", logdir, base->name, name);
 	if(access(p, 0) == 0)
 		b->fd = open(p, OWRITE);
@@ -104,10 +101,6 @@ bufferCreate(Channel *cmds)
 	Buffer *b;
 
 	b = mallocz(sizeof(*b), 1);
-	b->name = nil;
-	memset(b->title, 0, sizeof(b->title));
-	memset(b->status, 0, sizeof(b->status));
-	memset(b->aside, 0, sizeof(b->aside));
 	b->cmds = cmds;
 	b->tag = -1;
 	b->unread = 0;

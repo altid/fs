@@ -343,7 +343,7 @@ clwrite(Req *r)
 			f->cl->current = b;
 			b->tag = r->tag;
 			qunlock(&b->l);
-			memset(path, sizeof(path), 0);
+			memset(path, 0, sizeof(path));
 			snprint(path, sizeof(path), "%s/%s/%s", logdir, root->name, s);
 			f->cl->fd = open(path, OREAD);
 			r->fid->aux = f;
@@ -361,9 +361,8 @@ clwrite(Req *r)
 			respond(r, nil);
 		} else {
 			snprint(path, sizeof(path), "%s %s", t, s);
-			srvrelease(fs);
 			send(root->cmds, path);
-			srvacquire(fs);
+			send(root->cmds, nil);
 			respond(r, nil);
 		}
 		return;
@@ -373,10 +372,13 @@ clwrite(Req *r)
 			return;
 		}
 		n = r->ofcall.count = r->ifcall.count;
-		n += strlen(f->cl->current->name) + 7;
-		snprint(path, n, "input %s\n%s", f->cl->current->name, r->ifcall.data);
+		n += strlen(f->cl->current->name) + 8;
+		memset(path, 0, sizeof(path));
+		snprint(path, n, "input %s\n%s\n", f->cl->current->name, r->ifcall.data);
 		send(root->cmds, path);
+		send(root->cmds, nil);
 		respond(r, nil);
+
 		return;
 	}
 	respond(r, "not implemented");

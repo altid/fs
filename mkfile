@@ -11,6 +11,7 @@ OFILES=\
 	fs.$O\
 	buffer.$O\
 	client.$O\
+	convS2C.$O\
 	service.$O\
 	notification.$O\
 	tabs.$O\
