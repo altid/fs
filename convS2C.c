@@ -17,25 +17,22 @@ static int parse_cmd(struct state *s);
 static int parse_from(struct state *s);
 static int parse_data(struct state *s);
 
-Cmd*
-convS2C(char *c)
+uint
+convS2C(Cmd *cmd, char *c, uint n)
 {
 	struct state s;
-	Cmd cmd;
 
 	s.fn = (*parse_cmd);
 	s.cmd.type = ErrorCmd;
-	strcpy(s.cmd.data, "An unknown error has occured");
 	s.base = c;
-	s.size = strlen(c);
+	s.size = n;
 	while((s.fn(&s) > 0));
 
-	cmd.type = s.cmd.type;
-	strcpy(cmd.buffer, s.cmd.buffer);
-	strcpy(cmd.data, s.cmd.data);
-	strcpy(cmd.svccmd, s.cmd.svccmd);
-
-	return &cmd;
+	cmd->type = s.cmd.type;
+	cmd->data = s.cmd.data;
+	strcpy(cmd->buffer, s.cmd.buffer);
+	strcpy(cmd->svccmd, s.cmd.svccmd);
+	return sizeof(cmd);
 }
 
 static int
@@ -57,33 +54,37 @@ parse_cmd(struct state *s)
 			if(strncmp("quit", s->base, n) == 0)
 				s->cmd.type = QuitCmd;
 			else
-				strcpy(s->cmd.data, s->base);
+				s->cmd.data = strdup(s->base);
 			return 0;
 		case ' ':
 		case '\t':
 			// The overwhelming majority will be feed activity
 			if(strncmp(s->base, "feed", 4) == 0)
 				s->cmd.type = FeedCmd;
-			else if(strncmp(s->base, "aside", 5) == 0)
+			else if(strncmp(s->base, "asi", 3) == 0)
 				s->cmd.type = SideCmd;
 			else if(strncmp(s->base, "nav", 3) == 0)
 				s->cmd.type = NavCmd;
-			else if(strncmp(s->base, "title", 5) == 0)
+			else if(strncmp(s->base, "titl", 4) == 0)
 				s->cmd.type = TitleCmd;
-			else if(strncmp(s->base, "image", 5) == 0)
+			else if(strncmp(s->base, "ima", 3) == 0)
 				s->cmd.type = ImageCmd;
-			else if(strncmp(s->base, "delete", 6) == 0)
+			else if(strncmp(s->base, "del", 3) == 0)
 				s->cmd.type = DeleteCmd;
-			else if(strncmp(s->base, "remove", 6) == 0)
+			else if(strncmp(s->base, "rem", 3) == 0)
 				s->cmd.type = RemoveCmd;
-			else if(strncmp(s->base, "notification", 12) == 0)
+			else if(strncmp(s->base, "noti", 4) == 0)
 				s->cmd.type = NotifyCmd;
-			else if(strncmp(s->base, "error", 5) == 0)
+			else if(strncmp(s->base, "err", 3) == 0)
 				s->cmd.type = ErrorCmd;
-			else if(strncmp(s->base, "status", 6) == 0)
+			else if(strncmp(s->base, "stat", 4) == 0)
 				s->cmd.type = StatusCmd;
-			else if(strncmp(s->base, "create", 6) == 0)
+			else if(strncmp(s->base, "crea", 4) == 0)
 				s->cmd.type = CreateCmd;
+			else if(strncmp(s->base, "buf", 3) == 0)
+				s->cmd.type = BufferCmd;
+			else if(strncmp(s->base, "mark", 4) == 0)
+				s->cmd.type = MarkdownCmd;
 			else {
 				s->cmd.type = ServiceCmd;
 				strncpy(s->cmd.svccmd, s->base, n);
@@ -140,7 +141,6 @@ static int
 parse_data(struct state *s)
 {
 	// We may eventually do some processing here
-	strncpy(s->cmd.data, s->base, s->size);
-	s->cmd.data[s->size] ='\0';
-	return 0;	
+	s->cmd.data = strdup(s->base);
+	return 0;
 }

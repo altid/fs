@@ -235,6 +235,7 @@ clread(Req *r)
 Again:
 		// Check if we have a tag here, abort early if so.
 		if(b->tag != flushtag){
+			memset(buf, 0, sizeof(buf));
 			n = pread(f->cl->fd, buf, sizeof(buf), r->ifcall.offset);
 			if(n > 0){
 				// cut off the EOF
@@ -249,7 +250,6 @@ Again:
 			}
 		} else
 			flushtag = -1;
-		memset(buf, 0, sizeof(buf));
 		srvacquire(fs);
 		respond(r, nil);
 		return;
@@ -301,7 +301,7 @@ String:
 		qlock(&root->l);
 		memset(buf, 0, sizeof(buf));
 		for(b = root->next; b; b = b->next){
-			n += snprint(buf + n, sizeof(buf) - n, "%t\n", b);
+			n += snprint(buf + n, sizeof(buf) - n, "%N\n", b);
 		}
 		qunlock(&root->l);
 		goto String;
@@ -317,19 +317,21 @@ clwrite(Req *r)
 {
 	Buffer *b;
 	Clfid *f;
-	char *s, *t, path[1024];
-	int n;
+	Cmd cmd;
+	char *s, t[MaxDatalen], path[1024];
 
 	f = r->fid->aux;
+
+	s = mallocz(r->ifcall.count, 1);
+	memmove(s, r->ifcall.data, r->ifcall.count);
+
 	switch(f->level){
 	case Qctl:
-		n = r->ofcall.count = r->ifcall.count;
-		s = emalloc(n+1);
-		memmove(s, r->ifcall.data, n);
-		t = strtok(s, " ");
-		s = strtok(nil, "\n");
-		if(strcmp(t, "buffer") == 0){
-			b = bufferSearch(root, s);
+		memset(&cmd, 0, CmdSize);
+		convS2C(&cmd, s, r->ifcall.count);
+		switch(cmd.type){
+		case BufferCmd:
+			b = bufferSearch(root, cmd.buffer);
 			if(!b){
 				respond(r, "No buffers available");
 				return;
@@ -337,51 +339,39 @@ clwrite(Req *r)
 			qlock(&b->l);
 			if(f->cl->fd){
 				b->tag = flushtag = 1;
-				rwakeupall(&b->rz);
+				rwakeup(&b->rz);
 				close(f->cl->fd);
 			}
 			f->cl->current = b;
 			b->tag = r->tag;
 			qunlock(&b->l);
 			memset(path, 0, sizeof(path));
-			snprint(path, sizeof(path), "%s/%s/%s", logdir, root->name, s);
+			snprint(path, sizeof(path), "%s/%s/%s", logdir, root->name, cmd.buffer);
 			f->cl->fd = open(path, OREAD);
 			r->fid->aux = f;
-			respond(r, nil);
-		} else if(strcmp(t, "markdown")==0){
-			if(f->cl->showmarkdown)
-				f->cl->showmarkdown = 0;
-			else
-				f->cl->showmarkdown = 1;
-			r->fid->aux = f;
-			respond(r, nil);
-		} else if(strcmp(t, "hidemarkdown")==0){
-			f->cl->showmarkdown = 0;
-			r->fid->aux = f;
-			respond(r, nil);
-		} else {
-			snprint(path, sizeof(path), "%s %s", t, s);
-			send(root->cmds, path);
-			send(root->cmds, nil);
-			respond(r, nil);
+			goto Out;
+		case MarkdownCmd:
+			f->cl->showmarkdown = !f->cl->showmarkdown;
+			goto Out;
+		default:
+			send(root->cmds, &cmd);
+			goto Out;
 		}
-		return;
 	case Qinput:
-		if(!f->cl || !f->cl->current){
+		r->ofcall.count = 0;
+		if(f->cl->current == nil){
 			respond(r, "No buffer selected");
 			return;
 		}
-		n = r->ofcall.count = r->ifcall.count;
-		n += strlen(f->cl->current->name) + 8;
-		memset(path, 0, sizeof(path));
-		snprint(path, n, "input %s\n%s\n", f->cl->current->name, r->ifcall.data);
-		send(root->cmds, path);
-		send(root->cmds, nil);
-		respond(r, nil);
-
-		return;
+		// Cut off the newline
+		memset(t, 0, MaxDatalen);
+		snprint(t, sizeof(t), "input %s\n%s", f->cl->current->name, r->ifcall.data);
+		send(root->input, t);
 	}
-	respond(r, "not implemented");
+Out:
+	free(s);
+	respond(r, nil);
+	return;
 }
 
 void

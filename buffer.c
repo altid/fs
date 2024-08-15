@@ -96,12 +96,13 @@ bufferSearchTag(Buffer *base, ulong tag)
 }
 
 Buffer*
-bufferCreate(Channel *cmds)
+bufferCreate(Channel *cmds, Channel *input)
 {
 	Buffer *b;
 
 	b = mallocz(sizeof(*b), 1);
 	b->cmds = cmds;
+	b->input = input;
 	b->tag = -1;
 	b->unread = 0;
 	b->notify = nil;

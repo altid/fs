@@ -52,6 +52,7 @@ struct Service
 	Ref;
 
 	Channel	*cmds;
+	Channel   *input;
 	Buffer	*base;
 	char	*name;
 	int	isInitialized;
@@ -80,8 +81,9 @@ newservice(void)
 
 	// NOTE: If you're sending more commands than this before they are processed, up this number
 	// But also it might be time to question your design, because commands really should not be taking long
-	svc->cmds = chancreate(1024, 32);
-	svc->base = bufferCreate(svc->cmds);
+	svc->cmds = chancreate(sizeof(Cmd*), 8);
+	svc->input = chancreate(sizeof(char*), 8);
+	svc->base = bufferCreate(svc->cmds, svc->input);
 	svc->isInitialized = 0;
 	
 	return svc;
@@ -279,13 +281,30 @@ servicegen(int i, Dir *d, void *aux)
 	return 0;
 }
 
+enum {
+	CmdRead,
+	InputRead,
+};
+
+
 void
 svcread(Req *r)
 {
-	char buf[1024];
+
+	Cmd cmd;
+	char input[MaxDatalen];
+	char buf[CmdSize];
 	Svcfid *f;
 
 	f = r->fid->aux;
+	memset(buf, 0, CmdSize);
+	Alt a[] = {
+		[CmdRead] = { nil, &cmd, CHANRCV },
+		[InputRead] = { nil, input, CHANRCV },
+	};
+
+	a[CmdRead].c = f->svc->cmds;
+	a[InputRead].c = f->svc->input;
 
 	switch(f->level){
 	case Qsroot:
@@ -297,7 +316,6 @@ svcread(Req *r)
 		respond(r, nil);
 		return;
 	case Qctl:
-		memset(buf, 0, sizeof(buf));
 		// NOTE: This stays here so we always get a good ID back on the client from the initial read
 		if(!f->svc->isInitialized) {
 			snprint(buf, sizeof(buf), "%d\n", SERVICEID(f->svc));
@@ -306,10 +324,20 @@ svcread(Req *r)
 		} else {
 			// Wait for any data/command from the client
 			srvrelease(fs);
-			recv(f->svc->cmds, buf);
+			memset(&cmd, 0, CmdSize);
+			switch(alt(a)) {
+			case CmdRead:
+				if(cmd.type != FlushCmd){
+					snprint(buf, sizeof(buf), "%C\n data", &cmd);
+					readstr(r, buf);
+
+				}
+				break;	
+			case InputRead:
+				readstr(r, input);
+				break;
+			}
 			srvacquire(fs);
-			if(strcmp(buf, "flush") != 0)
-				readstr(r, buf);
 			respond(r, nil);
 		}
 		return;
@@ -324,34 +352,40 @@ svcwrite(Req *r)
 {
 	int n;
 	Svcfid *f;
-	Cmd *c;
+	Cmd cmd;
 	Buffer *b;
 	Dir *d;
-	char *p;
+	char *p, *s;
 	char path[1024];
 
 	f = r->fid->aux;
 
 	if(f->level == Qctl){
 		n = r->ofcall.count = r->ifcall.count;
-		p = mallocz(n+1, 1);
+		p = mallocz(n, 1);
 		memmove(p, r->ifcall.data, n);
-		c = convS2C(p);
-		if(c == nil){
-			respond(r, "unable to parse command");
-			return;
-		}
-		switch(c->type){
+		convS2C(&cmd, p, n);
+		switch(cmd.type){
 		case CloneCmd:
 			if(!f->svc->isInitialized){
-				f->svc->name = estrdup(c->data);
-				strcpy(f->svc->base->name, c->data);
+				f->svc->name = estrdup(cmd.data);
+				strcpy(f->svc->base->name, cmd.data);
 				memset(path, 0, sizeof(path));
-				snprint(path, sizeof(path), "%s/%s", logdir, c->data);
+				snprint(path, sizeof(path), "%s/%s", logdir, cmd.data);
 				close(create(path, OREAD, DMDIR | 0755));
 				clfs.aux = f->svc->base;
-				f->svc->childpid = threadpostsrv(&clfs, strdup(c->data));
+				f->svc->childpid = threadpostsrv(&clfs, strdup(cmd.data));
 				if(f->svc->childpid >= 0){
+					s = emalloc(10+strlen(cmd.data));
+					strcpy(s, "/srv/");
+					strcat(s, cmd.data);
+					d = dirstat(s);
+					d->mode = 0666;
+					if(dirwstat(s, d) < 0){
+						respond(r, "unable to set mode");
+						return;
+					}
+					free(s);
 					f->svc->isInitialized++;
 					r->fid->aux = f;
 					respond(r, nil);
@@ -363,36 +397,36 @@ svcwrite(Req *r)
 			respond(r, nil);
 			return;
 		case CreateCmd:
-			respond(r, bufferPush(f->svc->base, c->buffer));
+			respond(r, bufferPush(f->svc->base, cmd.buffer));
 			return;
 		case NotifyCmd:
 			respond(r, "not implemented yet");
 			return;
 		case DeleteCmd:
-			respond(r, bufferDrop(f->svc->base, c->buffer));
+			respond(r, bufferDrop(f->svc->base, cmd.buffer));
 			return;
 		case ErrorCmd:
 			respond(r, "not implemented yet");
 			return;
 		}
-		if(b = bufferSearch(f->svc->base, c->buffer)) {
+		if(b = bufferSearch(f->svc->base, cmd.buffer)) {
 			qlock(&b->l);
-			switch(c->type){
+			switch(cmd.type){
 			case FeedCmd:
 				d = dirfstat(b->fd);
-				pwrite(b->fd, c->data, strlen(c->data), d->length);
+				pwrite(b->fd, cmd.data, strlen(cmd.data), d->length);
 				free(d);
 				if(rwakeupall(&b->rz) == 0)
 					b->unread++;
 				break;
 			case StatusCmd:
-				strcpy(b->status, c->data);
+				strcpy(b->status, cmd.data);
 				break;
 			case TitleCmd:
-				strcpy(b->title, c->data);
+				strcpy(b->title, cmd.data);
 				break;
 			case SideCmd:
-				strcpy(b->aside, c->data);
+				strcpy(b->aside, cmd.data);
 				break;
 			}
 			qunlock(&b->l);
@@ -407,11 +441,15 @@ svcwrite(Req *r)
 void
 svcflush(Req *r)
 {
+	Cmd cmd;
 	int i;
+
 	for(i = 0; i < nservice; i++)
 		if(service[i].ref > 0)
 			if((bufferSearchTag(service[i].base, r->tag))){
-				nbsend(service[i].cmds, "flush");
+				memset(&cmd, 0, CmdSize);
+				cmd.type = FlushCmd;
+				send(service[i].cmds, &cmd);
 				break;
 			}
 	respond(r, nil);

@@ -18,21 +18,29 @@ enum
 	FeedCmd,
 	QuitCmd,
 	ServiceCmd,
+	InputCmd,
+	FlushCmd,
+	BufferCmd,
+	MarkdownCmd,
 
-	MaxBuflen = 256,
+	// TODO: Move data to the stack
+	MaxBuflen = 128,
+	MaxDatalen = 1024,
+	CmdSize = MaxBuflen * 2 + 1,
 };
 
 struct Buffer
 {
 	QLock       l;
 	char	name[MaxBuflen];
-	char	title[1024];
-	char	status[1024];
+	char	title[512];
+	char	status[512];
 	char	*aside;
 	int	fd;	// feed
 	int	tag;	// feed
 	int	unread;
 	Channel	*cmds;
+	Channel   *input;
 	Notify	*notify;
 	Buffer	*next;
 	Rendez	rz;
@@ -49,11 +57,11 @@ struct Cmd
 	// Potentially big
 	int	type;
 	char	buffer[MaxBuflen];
-	char	data[2048];
-	char	svccmd[256];
+	char	svccmd[MaxBuflen];
+	char	*data;
 };
 
-Buffer *bufferCreate(Channel*);
+Buffer *bufferCreate(Channel*, Channel*);
 Buffer *bufferSearch(Buffer*, char*);
 Buffer *bufferSearchTag(Buffer*, ulong);
 char *bufferDrop(Buffer*, char*);
@@ -62,6 +70,7 @@ void bufferDestroy(Buffer*);
 
 int Tconv(Fmt*);
 int Nconv(Fmt*);
+int Cconv(Fmt*);
 
 void* emalloc(int);
 char* estrdup(char*);
@@ -72,7 +81,8 @@ char *user;
 char *logdir;
 int debug;
 
-Cmd* convS2C(char*);
+uint convS2C(Cmd*, char*, uint);
+
 void clattach(Req*);
 void clstat(Req*);
 char *clwalk1(Fid*, char*, Qid*);

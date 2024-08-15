@@ -50,8 +50,9 @@ usage(void)
 void
 threadmain(int argc, char *argv[])
 {
-	fmtinstall('t', Tconv);
+	fmtinstall('N', Tconv);
 	fmtinstall('!', Nconv);
+	fmtinstall('C', Cconv);
 	user = getuser();
 	mtpt = "/mnt/alt";
 	logdir = "/tmp/alt";
