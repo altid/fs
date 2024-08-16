@@ -82,7 +82,6 @@ newservice(void)
 	// NOTE: If you're sending more commands than this before they are processed, up this number
 	// But also it might be time to question your design, because commands really should not be taking long
 	svc->cmds = chancreate(sizeof(Cmd*), 8);
-	svc->input = chancreate(sizeof(char*), 8);
 	svc->base = bufferCreate(svc->cmds, svc->input);
 	svc->isInitialized = 0;
 	
@@ -291,20 +290,13 @@ void
 svcread(Req *r)
 {
 
-	Cmd cmd;
-	char input[MaxDatalen];
+	Cmd *cmd;
+
 	char buf[CmdSize];
 	Svcfid *f;
 
 	f = r->fid->aux;
 	memset(buf, 0, CmdSize);
-	Alt a[] = {
-		[CmdRead] = { nil, &cmd, CHANRCV },
-		[InputRead] = { nil, input, CHANRCV },
-	};
-
-	a[CmdRead].c = f->svc->cmds;
-	a[InputRead].c = f->svc->input;
 
 	switch(f->level){
 	case Qsroot:
@@ -324,20 +316,12 @@ svcread(Req *r)
 		} else {
 			// Wait for any data/command from the client
 			srvrelease(fs);
-			memset(&cmd, 0, CmdSize);
-			switch(alt(a)) {
-			case CmdRead:
-				if(cmd.type != FlushCmd){
-					snprint(buf, sizeof(buf), "%C\n data", &cmd);
-					readstr(r, buf);
-
-				}
-				break;	
-			case InputRead:
-				readstr(r, input);
-				break;
-			}
+		 	cmd = recvp(f->svc->cmds);
 			srvacquire(fs);
+			if(cmd){
+				snprint(buf, sizeof(buf), "%C", cmd);
+				readstr(r, buf);
+			}
 			respond(r, nil);
 		}
 		return;

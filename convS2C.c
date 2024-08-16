@@ -39,6 +39,7 @@ static int
 parse_cmd(struct state *s)
 {
 	int n;
+	char *first;
 
 	n = 0;
 	for(;;){
@@ -87,7 +88,8 @@ parse_cmd(struct state *s)
 				s->cmd.type = MarkdownCmd;
 			else {
 				s->cmd.type = ServiceCmd;
-				strncpy(s->cmd.svccmd, s->base, n);
+				first = strtok(s->base, " ");
+				sprint(s->cmd.svccmd, first);
 			}
 			s->size -= n;
 			n++;

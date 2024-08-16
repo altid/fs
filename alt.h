@@ -26,7 +26,7 @@ enum
 	// TODO: Move data to the stack
 	MaxBuflen = 128,
 	MaxDatalen = 1024,
-	CmdSize = MaxBuflen * 2 + 1,
+	CmdSize = MaxBuflen * 2 + 1 + MaxDatalen,
 };
 
 struct Buffer

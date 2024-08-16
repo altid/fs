@@ -15,7 +15,7 @@ Cconv(Fmt *fp)
 	c = va_arg(fp->args, Cmd*);
 	switch(c->type){
 	case ServiceCmd:
-		if(c->data != nil)
+		if(strlen(c->data) > 0)
 			snprint(s, sizeof(s), "%s %s\n%s", c->svccmd, c->buffer, c->data);
 		else
 			snprint(s, sizeof(s), "%s %s", c->svccmd, c->buffer);

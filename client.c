@@ -318,17 +318,13 @@ clwrite(Req *r)
 	Buffer *b;
 	Clfid *f;
 	Cmd cmd;
-	char *s, t[MaxDatalen], path[1024];
+	char path[1024];
 
 	f = r->fid->aux;
-
-	s = mallocz(r->ifcall.count, 1);
-	memmove(s, r->ifcall.data, r->ifcall.count);
-
+	memset(&cmd, 0, sizeof(Cmd));
 	switch(f->level){
 	case Qctl:
-		memset(&cmd, 0, CmdSize);
-		convS2C(&cmd, s, r->ifcall.count);
+		convS2C(&cmd, r->ifcall.data, r->ifcall.count);
 		switch(cmd.type){
 		case BufferCmd:
 			b = bufferSearch(root, cmd.buffer);
@@ -354,7 +350,8 @@ clwrite(Req *r)
 			f->cl->showmarkdown = !f->cl->showmarkdown;
 			goto Out;
 		default:
-			send(root->cmds, &cmd);
+			sendp(root->cmds, &cmd);
+			sendp(root->cmds, nil);
 			goto Out;
 		}
 	case Qinput:
@@ -363,13 +360,14 @@ clwrite(Req *r)
 			respond(r, "No buffer selected");
 			return;
 		}
-		// Cut off the newline
-		memset(t, 0, MaxDatalen);
-		snprint(t, sizeof(t), "input %s\n%s", f->cl->current->name, r->ifcall.data);
-		send(root->input, t);
+		cmd.type = InputCmd;
+		strcpy(cmd.buffer, f->cl->current->name);
+		cmd.data = strdup(r->ifcall.data);
+		cmd.data[r->ifcall.count] = 0;
+		sendp(root->cmds, &cmd);
+		sendp(root->cmds, nil);
 	}
 Out:
-	free(s);
 	respond(r, nil);
 	return;
 }
