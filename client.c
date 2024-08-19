@@ -75,7 +75,10 @@ newclient(char *aname)
 	cl->ref++;
 
 	cl->current = bufferSearch(root, aname);
+	if(cl->current)
+		cl->current->tag = 0;
 	cl->showmarkdown = 0;
+	cl->fd = -1;
 
 	return cl;
 }
@@ -127,9 +130,17 @@ void
 clattach(Req *r)
 {
 	Clfid *f;
+	char path[1024];
 
 	f = mallocz(sizeof(*f), 1);
 	f->cl = newclient(r->ifcall.aname);
+
+	/* Attach request has buffer */
+	if(r->ifcall.aname[0]){
+		memset(path, 0, sizeof(path));
+		snprint(path, sizeof(path), "%s/%s/%s", logdir, root->name, r->ifcall.aname);
+		f->cl->fd = open(path, OREAD);
+	}
 	f->level = Qcroot;
 	clmkqid(&r->fid->qid, f->level, nil);
 	r->ofcall.qid = r->fid->qid;
@@ -225,7 +236,8 @@ clread(Req *r)
 		return;
 	case Qfeed:
 		// Catch EOF
-		if(!f->cl->fd || !f->cl->current){
+		if(f->cl->fd < 0 || !f->cl->current){
+			r->ofcall.count = 0;
 			r->ofcall.data[0] = 0;
 			respond(r, nil);
 			return;
@@ -239,8 +251,8 @@ Again:
 			n = pread(f->cl->fd, buf, sizeof(buf), r->ifcall.offset);
 			if(n > 0){
 				// cut off the EOF
-				r->ofcall.count = n;
-				memmove(r->ofcall.data, buf, n);
+			 	buf[n] = 0;
+				readstr(r, buf);
 			} else {
 				qlock(&b->l);
 				b->unread = 0;
@@ -333,7 +345,7 @@ clwrite(Req *r)
 				return;
 			}
 			qlock(&b->l);
-			if(f->cl->fd){
+			if(f->cl->fd > 0){
 				b->tag = flushtag = 1;
 				rwakeup(&b->rz);
 				close(f->cl->fd);

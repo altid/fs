@@ -5,6 +5,8 @@
 #include <9p.h>
 #include "alt.h"
 
+// TODO: Read runes instead of ascii
+
 struct state
 {
 	Cmd cmd;
@@ -38,10 +40,7 @@ convS2C(Cmd *cmd, char *c, uint n)
 static int
 parse_cmd(struct state *s)
 {
-	int n;
-	char *first;
-
-	n = 0;
+	int n = 0;
 	for(;;){
 		if(n > s->size)
 			return -1;
@@ -82,14 +81,13 @@ parse_cmd(struct state *s)
 				s->cmd.type = StatusCmd;
 			else if(strncmp(s->base, "crea", 4) == 0)
 				s->cmd.type = CreateCmd;
-			else if(strncmp(s->base, "buf", 3) == 0)
+			else if(strncmp(s->base, "buff", 4) == 0)
 				s->cmd.type = BufferCmd;
 			else if(strncmp(s->base, "mark", 4) == 0)
 				s->cmd.type = MarkdownCmd;
 			else {
 				s->cmd.type = ServiceCmd;
-				first = strtok(s->base, " ");
-				sprint(s->cmd.svccmd, first);
+				snprint(s->cmd.svccmd, n, s->base);
 			}
 			s->size -= n;
 			n++;
@@ -105,8 +103,7 @@ parse_cmd(struct state *s)
 static int
 parse_from(struct state *s)
 {
-	int n;
-	n = 0;
+	int n = 0;
 	for(;;){
 		if(n > s->size || n > MaxBuflen)
 			return -1;
@@ -118,7 +115,7 @@ parse_from(struct state *s)
 			s->size--;
 			s->base++;
 			break;
-		case '\0':
+		case 0:
 			strncpy(s->cmd.buffer, s->base, n);
 			return 0;
 		case '\n':
@@ -142,7 +139,29 @@ parse_from(struct state *s)
 static int
 parse_data(struct state *s)
 {
-	// We may eventually do some processing here
-	s->cmd.data = strdup(s->base);
-	return 0;
+	int n = 0;
+	char c;
+
+	for(;;) {
+		if(n >= s->size || n >= MaxBuflen)
+			return -1;
+		c = s->base[n];
+		switch(c){
+		// Useful control chars
+		case '\n':
+		case '\t':
+		case '\r':
+			break;
+		default:
+			// Anything under a space is an unhandled control char
+			if(c < ' '){
+				if(n > 0 ){	
+					s->cmd.data = strdup(s->base);
+					s->cmd.data[n] = 0;
+				}
+				return 0;
+			}
+		}
+		n++;
+	}
 }

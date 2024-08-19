@@ -367,7 +367,7 @@ svcwrite(Req *r)
 					d->mode = 0666;
 					if(dirwstat(s, d) < 0){
 						respond(r, "unable to set mode");
-						return;
+						goto Out;
 					}
 					free(s);
 					f->svc->isInitialized++;
@@ -375,23 +375,23 @@ svcwrite(Req *r)
 					respond(r, nil);
 				} else 
 					respond(r, "Unable to post to srv");
-				return;	
+				goto Out;
 			}
 			// Ignore, something weird going on.
 			respond(r, nil);
-			return;
+			goto Out;
 		case CreateCmd:
 			respond(r, bufferPush(f->svc->base, cmd.buffer));
-			return;
+			goto Out;
 		case NotifyCmd:
 			respond(r, "not implemented yet");
-			return;
+			goto Out;
 		case DeleteCmd:
 			respond(r, bufferDrop(f->svc->base, cmd.buffer));
-			return;
+			goto Out;
 		case ErrorCmd:
 			respond(r, "not implemented yet");
-			return;
+			goto Out;
 		}
 		if(b = bufferSearch(f->svc->base, cmd.buffer)) {
 			qlock(&b->l);
@@ -417,6 +417,8 @@ svcwrite(Req *r)
 			respond(r, nil);
 		} else
 			respond(r, "buffer not found");
+	Out:
+		free(p);
 		return;
 	}
 	respond(r, "not implemented");
